@@ -1,0 +1,2183 @@
+## TAKEN FROM rbl package (SESMAN) - v0.1.30 
+## https://github.com/SESman/rbl
+## Codes written by Dr Yves Le Bras (2017)
+## https://zenodo.org/records/809182
+
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#' Fitter function for brokenstick models
+#' 
+#' Basic computing engines of the brokenstick algorithm called by 
+#' \code{\link{brokenstick}}.
+#' 
+#' @param xy Data, as returned by \code{\link{xy.coords}}. The \code{x} values 
+#' have to be sorted.
+#' @param pts The points to use.
+#' @param eco.mem An integer value between 0 and 7 to control the memory size of the 
+#' output. \code{0} = no memory savings.
+#' @seealso \code{\link{brokenstick}} and \code{\link{optBrokenstick}} which should 
+#' be used to fit brokenstick models.
+#' @keywords internal
+#' @export
+bsmfit <- function(xy, pts, eco.mem = 0L) { 
+  if (eco.mem > 4) stop('"eco.mem" must be between 0 and 4.')
+  
+  # Compute stick slopes and coefficients
+  n <- diff(pts)
+  n[1L] <- n[1L] + 1 # First segment needs 1 more prediction for the first point
+  dy <- diff(xy[pts, 2L]) ; dx <- diff(xy[pts, 1L])
+  a <- dy / dx
+  b <- xy[pts[-length(pts)], 2L] - (a * xy[pts[-length(pts)], 1L])
+  
+  # Compute fitted values and residuals
+  fit <- rep(a, n) * xy[ , 1L] + rep(b, n)
+  res <- xy[, 2] - fit
+  
+  # Format output
+  out <- list(pts.x = xy[pts, 1L], pts.y = xy[pts, 2L], slope = a, intercept = b, 
+              pts = pts, residuals = res, fitted.values = fit, data = xy)
+  "if"(eco.mem != 0L, out[-unique(seq(8L - eco.mem + 1L, 8L))], out)
+}
+
+#' Fitting brokenstick models
+#' 
+#' \code{brokenstick} is used to fit brokenstick models on two-dimensional data 
+#' such as Time-Depth, Depth-Temperature or Depth-Light profiles. Brokenstick models 
+#' are useful for compressing or extracting the shape of high resolution profiles.
+#' 
+#' @param x The x data. Note that the \code{x} values have to be sorted. Can also 
+#' be a list of \code{x} and \code{y} (processed by \code{\link{xy.coords}}). 
+#' Alternatively, it can also be an object of class "\code{\link{formula}}".
+#' @param y The y data. (processed by \code{\link{xy.coords}}). Alternatively, 
+#' if \code{x} is a \code{'formula'}, \code{y} can also be an optional data frame, 
+#' list or environment (or object coercible by \code{\link{as.data.frame}} to a 
+#' data frame) containing the variables in the model. If not found in data, the 
+#' variables are taken from environment (\code{formula}), typically the environment 
+#' from which \code{brokenstick} is called.
+#' @param npts The number of points for the brokenstick model to fit. See 
+#' \code{\link{optBrokenstick}} for a version of \code{brokenstick} which figures 
+#' out this number of points automatically.
+#' @param start Some starting points to start the algorithm with.
+#' @param na.action A function which indicates what should happen when the data 
+#' contain \code{NAs}. The default is set by the \code{na.action} setting of 
+#' \code{\link{options}}, and is \code{\link{na.fail}} if that is unset. The 
+#' "factory-fresh" default is \code{\link{na.omit}}. Another possible value 
+#' is \code{NULL}, no action. Value \code{\link{na.exclude}} can be useful.
+#' @param ... Further arguments to be passed to \code{\link{bsmfit}} 
+#' such as \code{eco.mem}.
+#' @param allow.dup If \code{TRUE} the algorithm will not stop when duplicated 
+#' breakpoints are found. The output will contain a slot called \code{dup}, a 
+#' data.frame with the breakpoint number of the duplicates (\code{dup.no}) and the 
+#' breakpoint number of the its clone among real breakpoints (\code{pts.no})
+#' @param not.inj.action What should be done when \code{f: y -> x} is not injective.
+#' @param sort.data Should the data be sorted according to \code{x} values (when they 
+#' are not) before fitting the broken-stick model.
+#' 
+#' @return A \code{bsm} object with (depending on \code{eco.mem}):
+#' \itemize{
+#'   \item pts.x The x values of the brokenstick points (\code{eco.mem} inefficient).
+#'   \item pts.y The y values of the brokenstick points (\code{eco.mem} inefficient).
+#'   \item slope The slopes of each "stick" of the model (\code{eco.mem} inefficient).
+#'   \item intercept The intercept of each "stick" of the model (\code{eco.mem} inefficient).
+#'   \item pts (\code{eco.mem < 4}) The index of the brokenstick points.
+#'   \item na.action Information from the action which was applied to object if \code{NAs} 
+#'   were handled specially. (\code{eco.mem} inefficient)
+#'   \item residuals (\code{eco.mem < 3}) The model's residuals.
+#'   \item fitted.values (\code{eco.mem < 2}) The fitted values.
+#'   \item data (\code{eco.mem < 1}) The input data used for fitting.
+#'   \item pts.no The iteration number of points. (\code{eco.mem} inefficient)
+#' }
+#' @details See \code{\link{bsmfit}}, the function called by \code{brokenstick} 
+#' on each iteration to fit the model with specified points.
+#' @seealso \code{\link{optBrokenstick}} and \code{\link{predict.bsm}}, \code{\link{residuals.bsm}}, 
+#' \code{\link{update.bsm}}, \code{\link{summary.bsm}}, 
+#' \code{\link{coef.bsm}}, \code{\link{plot.bsm}}, \code{\link{as.data.frame.bsm}}
+#' for other functions with a S3 method for \code{bsm} objects. 
+#' @export
+#' @keywords brokenstick
+#' @examples
+#' data(exses)
+#' dv <- tdrply(identity, 1:2, no = 100, obj = exses)[[1]]
+#' 
+#' # Syntax
+#' bsm <- brokenstick(dv$time, dv$depth)
+#' bsm <- brokenstick(dv) # if two columns
+#' bsm <- brokenstick(depth ~ time, dv) 
+#' bsm <- with(dv, brokenstick(depth ~ time))
+brokenstick <- function(x, y, npts = 6, start  = NULL, na.action, 
+                        allow.dup = FALSE, 
+                        not.inj.action = c("ignore", "null", "error"), 
+                        sort.data = FALSE, ...) {
+  UseMethod("brokenstick")
+}
+
+#' @inheritParams brokenstick
+#' @export
+brokenstick.default <- function(x, y = NULL, npts = 6, 
+                                start = NULL, na.action, 
+                                allow.dup = FALSE, 
+                                not.inj.action = c("ignore", "null", "error"), 
+                                sort.data = FALSE, ...) {
+  # Format input data
+  nms <- if (is.recursive(x)) {
+    names(x)
+  } else {
+    c(deparse(substitute(x)), deparse(substitute(y)))
+  }
+  if (any(grepl('\\$', nms))) nms <- gsub('(.*\\$)(.*$)', '\\2', nms)
+  else if (any(sapply(nms, nchar) > 10)) nms <- c('x', 'y')
+  xy <- setNames(as.data.frame(xy.coords(x, y)[1:2]), nms) # formated data
+  
+  # Apply na.action
+  if (missing(na.action)) na.action <- options("na.action")[[1]]
+  xy <- do.call(na.action, list(xy))
+  
+  # Check data integrity
+  # X data should be monotonous
+  if (is.unsorted(xy[ ,1]) & is.unsorted(rev(xy[ ,1]))) {
+    message("X values are not sorted.")
+    if (sort.data) xy <- xy[order(xy[ ,1]), ]
+  }
+  # f: Y -> X should be injective
+  if (!is.injective(xy[ ,2], xy[ ,1])) {
+    not.inj.action <- match.arg(not.inj.action, not.inj.action)
+    if (not.inj.action == "error") {
+      stop("Data contains different y values with same x values.", 
+           " This is not appropriate for brokenstick models and ", 
+           "will result in segments with infinite coefficients.")
+    } else {
+      warning("Data contains different y values with same x values.", 
+              " This is not appropriate for brokenstick models and ", 
+              "will result in segments with infinite coefficients.")
+      if (not.inj.action == "null") return(NULL)
+    }
+  }
+  
+  # Broken sticks algorithm
+  pts <- "if"(is.null(start) || length(start) < 2, c(1, length(xy[ , 1L])), start)
+  np <- length(pts)
+  pts.no <- rep(1L, np)
+  dup.pts <- data.frame() ; ndup <- 0
+  niter <- 0
+  while (np < npts) {
+    niter <- niter + 1
+    if (niter > npts) {
+      warning("Infinite loop issue. brokenstick returns NULL.")
+      return(NULL)
+    }
+    brkstk <- bsmfit(xy, pts)
+    absRes <- abs(brkstk$residuals)
+    pts <- c(pts, which.max(absRes))
+    pts.no <- c(pts.no, max(pts.no) + ndup + 1L)
+    dup <- duplicated(pts)
+    dup.pts <- rbind(dup.pts, data.frame(
+      dup.no = pts.no[dup], 
+      pts.no = which(pts[!dup] == pts[dup])
+    ))
+    ndup <- nrow(dup.pts)
+    pts <- pts[!dup] ; pts.no <- pts.no[!dup]
+    ord <- order(pts) ; pts <- pts[ord] ; pts.no <- pts.no[ord]
+    if (ndup > 0) {
+      if (ndup == 1L) warning('Duplicated points found. "npts" may be too high.')
+      if (!allow.dup) break
+    }
+    np <- length(pts) + ndup
+  }
+  out <- bsmfit(xy, pts, ...)
+  out$pts.no <- pts.no
+  out$dup    <- dup.pts
+  
+  # Format output
+  out$na.action <- attr(xy, "na.action")
+  class(out) <- c('bsm', 'list')
+  out
+}
+
+#' @inheritParams brokenstick
+#' @keywords internal
+#' @export
+brokenstick.formula <- function(x, y = NULL, npts = 6, start = NULL, 
+                                na.action, ...) {
+  # Format input data from "formula" ("x" arg) and "data" ("y" arg) syntax
+  mf <- match.call(expand.dots = FALSE)
+  m <- match(c("x", "y"), names(mf), 0L)
+  mf <- mf[c(1L, m)]
+  mf[[1L]] <- quote(stats::model.frame)
+  names(mf) <- c('', 'formula', 'data')[seq_along(mf)]
+  mf <- eval(mf, parent.frame())
+  
+  # Apply na.action
+  if (missing(na.action)) na.action <- options("na.action")[[1]]
+  
+  # Launch algorithm as usual
+  brokenstick.default(mf[2:1], NULL, npts = npts, start = start, na.action, ...)
+}
+
+#' Update and Re-fit a brokenstick model
+#' 
+#' @param object Object of class inheriting from "\code{bsm}".
+#' @inheritParams brokenstick
+#' @param allow.dup Should the duplicated points be added anyway.
+#' @export
+#' @keywords internal brokenstick
+#' @examples
+#' data(exses)
+#' dv <- tdrply(identity, 1:2, no = 100, obj = exses)[[1]]
+#' bsm <- brokenstick(dv) 
+#' length(bsm$pts.x)
+#' 
+#' length(update(bsm, 5)$pts.x)
+#' length(update(bsm, 7)$pts.x)
+#' 
+#' \dontrun{
+#' # low resolution
+#' lr_bsm <- eco.mem(bsm)
+#' length(update(lr_bsm, 5)$pts.x)
+#' length(update(lr_bsm, 7)$pts.x)
+#' }
+update.bsm <- function(object, npts, allow.dup = FALSE, ...) {
+  # Check if an update is needed
+  np <- length(object$pts.x)
+  if (np == npts) return(object)
+  
+  # If Hi-Res data are not available update possible with smaller number of break points
+  if (!"data" %in% names(object)) {
+    if (npts > np) {
+      stop('Cannot improve BSM resolution without data (set "eco.mem" to 0).')
+    } else {
+      # Just select the first npts breakpoints but cannot get fitted values and residuals
+      return(brokenstick(object$pts.x, object$pts.y, npts, eco.mem = 4))
+    }
+  }
+  
+  # If Hi-Res data are available...
+  if (np < npts) {
+    # Resume process at last iteration and go on to requested number of break points
+    pts <- object$pts ; pts.no <- object$pts.no
+    while (np < npts) {
+      brkstk <- bsmfit(object$data, pts)
+      absRes <- abs(brkstk$residuals)
+      pts <- c(pts, which.max(absRes))
+      pts.no <- c(pts.no, max(pts.no) + 1L)
+      pts <- pts[ord <- order(pts)] ; pts.no <- pts.no[ord]
+      dup <- duplicated(pts)
+      if (any(dup)) {
+        warning('Duplicated points found. "npts" may be too high.')
+        # Stop if duplicated break points not allowed ("allow.dup" arg)
+        if (!allow.dup) {
+          pts <- pts[!dup] ; pts.no <- pts.no[!dup]
+          break
+        }
+      }
+      np <- length(pts)
+    }
+  } else {
+    # Just select the first npts breakpoints
+    cnd <- object$pts.no <= (npts - 1)
+    pts <- object$pts[cnd]
+    pts.no <- object$pts.no[cnd]
+  }
+  
+  # Refit BSM to get the correct coefficients, fitted values and residuals
+  x <- bsmfit(object$data, pts, ...)
+  x$pts.no <- pts.no
+  
+  # Format output
+  x$na.action <- "if"("na.action" %in% names(object), object$na.action, NULL)
+  class(x) <- c("bsm", "list")
+  x
+}
+
+#' Brokenstick model predictions
+#' 
+#' @param object Object of class inheriting from "\code{bsm}".
+#' @param newdata An optional data frame in which to look for variables with 
+#' which to predict. If omitted, the fitted values are used.
+#' @param ... other arguments.
+#' @export
+#' @details Require \code{eco.mem <= 4} (see \code{\link{bsmfit}}). When 
+#' using \code{newdata} argument, the function returns \code{NAs} for values that 
+#' do not belong to a stick.
+#' @seealso \code{\link{brokenstick}}, \code{\link{optBrokenstick}}, 
+#' \code{\link{which.stick}}
+#' @keywords internal brokenstick
+#' @examples
+#' data(exses)
+#' dv <- tdrply(identity, 1:2, no = 100, obj = exses)[[1]]
+#' bsm <- brokenstick(dv) 
+#' plot(bsm, data = TRUE, enumerate = TRUE)
+#' 
+#' ypred <- predict(bsm, newdata = xpred <- sample(dv$time, 10))
+#' points(xpred, ypred, col = 3, pch = 19)
+predict.bsm <- function(object, newdata, ...) {
+  # If "newdata" not provided, return fitted values else make new prediction
+  if (missing(newdata)) {
+    if (is.null(fitted(object))) {
+      if (!"data" %in% names(object)) {
+        stop("Impossible without x values. ", 'Consider add theses or set "eco.mem" less than 2.')
+      } else {
+        # Preventive programming, this case should not occur:
+        # "data" slot is missing before "fitted" slot when "eco.mem" argument is used
+        n <- diff(object$pts)
+        n[1] <- n[1] + 1 
+        return(rep(object$slope, n) * object$data$x + rep(object$intercept, n))
+      }
+    } else {
+      return(fitted(object))
+    }
+  } else {
+    # Find out which coefficients must be applied
+    stks <- which.stick(object, newdata)
+    if (is.POSIXct(newdata)){newdata <- as.numeric(newdata)}
+    return(object$slope[stks] * newdata + object$intercept[stks])
+  }
+  
+  # Preventive programming, for bug reports
+  stop('Unexpected case occured in "predict.bsm".')
+}
+
+#' To which brokenstick segment a point belongs to ?
+#' 
+#' Given a brokenstick model and a set of points, the function determines on which 
+#' stick the points are located.
+#' 
+#' @param object Object of class inheriting from "\code{bsm}".
+#' @param pts The set of the points to match aginst sticks.
+#' @param type The type of values provided in \code{pts}. To choose in 
+#' \code{c('x', 'i')} where \code{'x'} stands for x values and \code{'i'} stands 
+#' for the index of values.
+#' @export
+#' @seealso \code{\link{predict.bsm}}
+#' @keywords internal brokenstick
+#' @examples
+#' data(exses)
+#' dv <- tdrply(identity, 1:2, no = 100, obj = exses)[[1]]
+#' bsm <- brokenstick(dv) 
+#' (pts <- sample(1:nrow(dv), 5))
+#' which.stick(bsm, pts, type = 'i')
+#' which.stick(bsm, dv[pts, 1], type = 'x')
+#' 
+#' \dontrun{
+#' # For the actual points of the model the result does not matter so much
+#' # since both of previous and next segment are valid for prediction.
+#' which.stick(bsm, bsm$pts, 'i')
+#' }
+which.stick <- function(object, pts, type = c("x", "i")) {
+  bsm.pts <- switch(match.arg(type), x = object$pts.x, i = object$pts)
+  eql <- lapply(pts, function(x) x == bsm.pts)
+  grt <- lapply(pts, function(x) max(which(x >= bsm.pts) %else% NA))
+  lst <- lapply(pts, function(x) min(which(x <= bsm.pts) %else% NA))
+  
+  # Function returning scitck number given the location of data in comparison to 
+  # break points
+  .f <- function(eql, grt, lst) {
+    if (any(eql)) {ifelse(which(eql) == length(eql), which(eql) - 1, which(eql))}
+    else if (is.na(grt) || is.na(lst)) {NA}
+    else {grt}
+  }
+  out <- mapply(.f, eql, grt, lst)
+  if (any((len <- sapply(out, length)) != 1)) {
+    warning("Some data points were matched by several segments.\n ", 
+            "This issue can be related to non matching duplicates in x/y data.\n ",
+            "Here, the last matching segment is chosen every time this issue show up.")
+    out <- sapply(out, last)
+  }
+  as.integer(out)
+}
+
+#' Extract brokenstick models coefficients
+#' 
+#' @param object \code{bsm} object, typically result from \code{\link{brokenstick}} 
+#' or \code{\link{optBrokenstick}}.
+#' @param ... other arguments.
+#' @return A data frame with slope and intercepts of each stick.
+#' @seealso \code{\link{brokenstick}}, \code{\link{optBrokenstick}} for model fitting.
+#' @export
+#' @keywords internal brokenstick
+#' @details Require \code{eco.mem <= 4} (see \code{\link{bsmfit}}).
+#' @examples
+#' data(ses)
+#' dv <- tdrply(identity, 1:2, no = 100, obj= exses)[[1]]
+#' coef(brokenstick(dv))
+coef.bsm <- function(object, ...) {
+  # Just format corresponding slots into a data.frame output
+  out <- data.frame(intercept = object$intercept, slope = object$slope)
+  row.names(out) <- paste0("seg", seq(nrow(out)))
+  out
+}
+
+#' Plot brokenstick models
+#' 
+#' @param x \code{bsm} object to plot, typically result from \code{\link{brokenstick}} 
+#' or \code{\link{optBrokenstick}}.
+#' @param add If true add the plot to the already existing plot.
+#' @param type Character indicating the type of plotting; actually any of the 
+#' types as in \code{\link{plot.default}}.
+#' @param lwd The line width, a positive number, defaulting to 2.
+#' @param ylim the y limits (y1, y2) of the plot. 
+#' Here y1 > y2 and leads to a "reversed axis".
+#' @param col A specification for the default plotting color.
+#' @param col.pts Color of the breakpoints (can be of length > 1). 
+#' @param enumerate A switch to indicate if the iteration number of points should 
+#' be added to the plot.
+#' @param data Should the data used to fit the BSM be plotted as well ?
+#' @param xlab A title for the x axis: see \code{\link{title}}.
+#' @param ylab A title for the y axis: see \code{\link{title}}.
+#' @param ... Further graphical parameters (see \code{\link{par}}) may also be 
+#' supplied as arguments.
+#' @details Require \code{eco.mem <= 4} (see \code{\link{bsmfit}}).
+#' @seealso \code{\link{brokenstick}}, \code{\link{optBrokenstick}} 
+#' @keywords internal brokenstick
+#' @export
+#' @examples
+#' data(exses)
+#' dv <- tdrply(identity, 1:2, no = 100, obj= exses)[[1]]
+#' bsm <- brokenstick(dv) 
+#' plot(bsm, data = TRUE, enumerate = TRUE)
+#' 
+#' # Similar (BUT plot.tdr draws a POSIXct x axis while plot.bsm draws a numeric axis)
+#' plot(dv) 
+#' plot(bsm, add = TRUE, enumerate = TRUE)
+plot.bsm <- function(x, type = "b", lwd = 2, ylim = rev(range(xy$y)), 
+                     add = FALSE, col = 1, col.pts = col, 
+                     enumerate = FALSE, data = FALSE, 
+                     xlab = NULL, ylab = NULL, ...) {
+  # Argument checking in relation to plot type & colors
+  type %in% c("b", "l", "p") || stop("Only types 'p', 'l', and 'b' are supported.")
+  length(col) == 1 || stop("Only 'col.pts' can have a length > 1")
+  
+  # If xlab/ylab NULL, get the names of xy variables if available
+  nms <- c(
+    xlab %else% "if"("data" %in% names(x), names(x$data)[1], "bsm x"), 
+    ylab %else% "if"("data" %in% names(x), names(x$data)[2], "bsm y")
+  )
+  
+  # Generate BSM abstracted profile
+  y <- predict(x, newdata = x$pts.x)
+  valid_pred <- is.finite(y) # May occur because of infinite bsm coefficients.
+  if (any(!valid_pred)) warning("Non-finite values were predicted. Omitting them.")
+  xy <- xy.coords(x$pts.x[valid_pred], y[valid_pred], "x", "y")
+  
+  # Draw it
+  if (length(col.pts) > 1) {
+    type %in% c("b", "p") || stop("Length of 'col.pts' should be 1 when 'type' = 'l'.")
+    if (!add) plot(xy, type = "n", ylim = ylim, xlab = nms[1], ylab = nms[2], ...)
+    Map(points, x = xy$x, y = xy$y, lwd = lwd, col = col.pts, ...)
+    if (type == "b") lines(xy, type = "b", pch = NA, lwd = lwd, col = col, ...)
+  } else {
+    if (add) {
+      lines(xy, type = type, lwd = lwd, col = col, ...)
+    } else {
+      plot(xy, type = type, lwd = lwd, ylim = ylim, col = col, 
+           xlab = nms[1], ylab = nms[2], ...)
+    }
+  }
+  
+  # If break points numbering is requested
+  if (enumerate) text(xy, labels = x$pts.no, adj = c(1.5, 1.5), col = col.pts, cex = .8)
+  
+  # Hi-Res data can be added if requested and available
+  if (data) {
+    ("data" %in% names(x) && !is.null(x$data)) || stop('"data" slot is missing in "x".')
+    lines(x$data)
+  }
+  
+  invisible(NULL)
+}
+
+#' Extract brokenstick model residuals
+#' 
+#' @param object \code{bsm} object, typically result from \code{\link{brokenstick}} 
+#' or \code{\link{optBrokenstick}}.
+#' @param type To choose in \code{c('normal', 'absolute')}. The second choice 
+#' returning the absolute value of the first.
+#' @param newdata \code{x} and \code{y} data to used when interested in specific 
+#' residual values (\code{x} in first column, \code{y} in second column).
+#' @param ... Other arguments.
+#' @return Returns model residuals if \code{newdata} is omited. Returns residuals 
+#' computed from \code{newdata} otherwise. In this case, returns \code{NAs} for 
+#' values that do not belong to a stick .
+#' @details Require \code{eco.mem <= 4} if using \code{newdata} argument but requires 
+#' \code{eco.mem <= 2} otherwise (see \code{\link{bsmfit}}).
+#' @seealso \code{\link{brokenstick}}, \code{\link{optBrokenstick}}
+#' @export
+#' @keywords internal brokenstick
+#' @examples
+#' data(exses)
+#' dv <- tdrply(identity, 1:2, no = 100, obj= exses)[[1]]
+#' bsm <- brokenstick(dv)
+#' plot(residuals(bsm)) ; abline(v = bsm$pts, h = 0, col = "grey")
+residuals.bsm <- function(object, type = c("normal", "absolute"), newdata, ...) {
+  # If "newdata" not provided, return residual slot else make new prediction
+  if (!missing(newdata)) {
+    if (length(newdata) < 2) {stop('Please provide "x" and "y" data in "newdata" argument.')}
+    ypred <-  predict.bsm(object, newdata = newdata[ , 1])
+    out <- newdata[ , 2] - ypred
+  } else {
+    if (all(!"residuals" %in% names(object))) {
+      stop('Cant return residuals without "residuals" slot or "newdata" argument.')
+    } else {
+      out <- object$residuals
+    }
+  }
+  
+  # Format output to requested "type"
+  switch(match.arg(type), normal = out, absolute = abs(out))
+}
+
+#' Fitting automatic brokenstick models
+#' 
+#' \code{optBrokenstick} is similar to \code{\link{brokenstick}} except that a 
+#' cost function can be used to determine the optimal number of points.
+#' 
+#' @inheritParams brokenstick
+#' @param x The x data. Note that the \code{x} values have to be sorted. Can also 
+#' be a list of \code{x} and \code{y} data as returned by \code{\link{xy.coords}}.
+#' @param y The y data.
+#' @param threshold A threshold value for the cost function to be used instead of 
+#' the minimum. If provided the search of a local minimum in the cost function is 
+#' abandoned.
+#' @param cost The cost function to use. Some are included in the package such as 
+#' \code{\link{max_dist_cost}}, \code{\link{dist_per_pt_cost}}, 
+#' \code{\link{rss_cost}}, \code{\link{dzi_cost}} etc. Feel free to use a custom one.
+#' @param npmin Minimun number of points.
+#' @param npmax Maximum number of points.
+#' @return Same as \code{\link{brokenstick}} with the value of the cost function.
+#' @seealso \code{\link{brokenstick}} and \code{\link{predict.bsm}}, \code{\link{residuals.bsm}}, 
+#' \code{\link{update.bsm}}, \code{\link{summary.bsm}}, 
+#' \code{\link{coef.bsm}}, \code{\link{plot.bsm}}, \code{\link{as.data.frame.bsm}}
+#' for other functions with a S3 method for \code{bsm} objects. 
+#' @export
+#' @keywords brokenstick
+#' @examples
+#' data(exses)
+#' dv <- tdrply(identity, 1:2, no = 90, obj = exses)[[1]]
+#' 
+#' bsm_6p <- brokenstick(dv, npts = 6)
+#' plot(bsm_6p, data = TRUE)
+#' 
+#' bsm_30m <- optBrokenstick(dv, threshold = 30, cost = max_dist_cost) 
+#' plot(bsm_30m, add = TRUE, col = 2, lty = 2, enumerate = TRUE, 
+#'      col.pts = (bsm_30m$pts.no > 5) + 1)
+#' 
+#' bsm_5m <- optBrokenstick(dv, threshold = 5, cost = max_dist_cost) 
+#' plot(bsm_5m, add = TRUE, col = 3, lty = 3, enumerate = TRUE, 
+#'      col.pts = (bsm_5m$pts.no > max(bsm_30m$pts.no)) + (bsm_5m$pts.no > 5) + 1)
+optBrokenstick <- function(x, y = NULL, threshold, cost = max_dist_cost, 
+                           npmin = 2, npmax = Inf, start = NULL, na.action, ...) {
+  # Check inputs consitency
+  if (npmin < length(start)) 
+    stop('"npmin" must be equal or greater than the length of "start".')
+  if (npmax <= length(start)) 
+    stop('"npmax" must be greater than the length of "start".')
+  if (npmax <= npmin) 
+    stop('"npmax" must be greater than "npmin".')
+  
+  # Set defaults for "na.action" and "threshold"
+  if (missing(na.action)) na.action <- options("na.action")[[1]]
+  if (missing(threshold)) threshold <- -Inf
+  
+  # Initiate algorithm
+  bsm0 <- brokenstick(x, y, npmin, start, na.action, ...)
+  S0 <- cost(bsm0)
+  # Start iterations
+  repeat {
+    # Stop if max number of break point or if is the threshold cost is reached
+    if (S0 <= threshold || length(bsm0$pts) == npmax) break
+    bsm <- update(bsm0, npts = length(bsm0$pts) + 1)
+    S <- cost(bsm)
+    # Stop if threshold does not make sense or cost increases
+    if (is.infinite(threshold) && S >= S0) break
+    bsm0 <- bsm ; S0 <- S
+  }
+  bsm <- update(bsm0, npts = length(bsm0$pts), ...)
+  
+  # Format output
+  bsm$cost <- cost(bsm)
+  bsm
+}
+
+#' Get the maximun residual of a BSM at a given iteration 
+#' 
+#' @param x \code{bsm} object as returned by \code{\link{brokenstick}} or 
+#' \code{\link{optBrokenstick}}.
+#' @param iter the iteration number for which the maximum residual is to be 
+#' returned (Ri). If \code{NULL} then \code{iter} is set to the last iteration 
+#' in \code{x}
+#' @inheritParams residuals.bsm
+#' @export
+#' @keywords internal brokenstick
+#' @examples 
+#' data(exses)
+#' dv <- tdrply(identity, 1:2, no = 100, obj = exses)[[1]]
+#' bsm <- brokenstick(dv) 
+#' max_residual(bsm, iter = 5)
+#' 
+#' \dontrun{
+#' max_residual(eco.mem(bsm), iter = 5) # error
+#' max_residual(eco.mem(bsm), iter = 4)
+#' }
+max_residual <- function(x, iter = NULL, type = c("normal", "absolute")) {
+  # Check inputs and set iter to default value when necessary
+  is.bsm(x) || stop('x must be of class "bsm"')
+  iter <- iter %else% (length(x$pts.x) - 1)
+  
+  # Update "x" to necessary number of break point given "iter"
+  npts <- iter + 1
+  bsm0 <- update(x, npts)
+  
+  # If data slot is available use it so that any iteration can be asked
+  if ("data" %in% names(x) && !is.null(x$data)) {
+    res <- resid(bsm0)
+    out <- res[which.max(abs(res))]
+  } else {
+    bsm1 <- try(update(x, npts + 1), TRUE) %else% stop('Requested iteration ', 
+                                                       'number "iter" is too high.')
+    rk <- which.max(bsm1$pts.no)
+    out <- predict(bsm0, newdata = bsm1$pts.x[rk]) - bsm1$pts.y[rk]
+  }
+  
+  # Format output to requested "type"
+  switch(match.arg(type), normal = out, absolute = abs(out))
+}
+
+#' Compute goodness of fit of brokenstick models: Dive Zone Index (DZI)
+#' 
+#' An index of the goodness of fit for brokenstick models. Value of the dive zone 
+#' index ranges from 0 (perfect fit) to 1. See original article in references.
+#' 
+#' @param x a \code{bsm} object as returned by \code{\link{brokenstick}} or 
+#' \code{\link{optBrokenstick}}.
+#' @param iter the iteration number for which the DZI is to be computed. If 
+#' \code{iter = NULL} then it is set to last BSM iteration.
+#' @param n Optional. The number of points to use when calculating the dive zone limits. 
+#' if \code{NULL} then \code{n} is set to the number of record in the dataset used to 
+#' fit the BSM (when available) or 500 (when not available)
+#' @export
+#' @keywords brokenstick
+#' @details If the original TDR data are not available to the function the DZI 
+#' of the last BSM iteration will be computed using the maximum residual from the 
+#' previous iteration.
+#' @return A \code{dzi} object with:
+#' \itemize{
+#'   \item dzi The dive zone index obtained at each iteration.
+#'   \item max_res The maximum residuals at each iteration.
+#'   \item dz_Lbnd Dive zone lower bound.
+#'   \item dz_Ubnd Dive zone upper bound.
+#'   \item dz_width The difference between the two previous slots i.e. the vertical 
+#'   width of the dive zone.
+#'   \item dz_Xval A vector giving the x values corresponding to \code{dz_Lbnd}, 
+#'   \code{dz_Ubnd} and \code{dz_width}.
+#'   \item no_seg A vector giving the number of BSM segments to which the 
+#'   \code{dz_Xval} belong.
+#'   \item seg_width Vertical width covered by BSM segments.
+#'   \item seq_length Duration of BSM segments.
+#'   \item pts.x, pts.y, pts.no Breakpoints information inherited from \code{x}.
+#'   \item data The raw data of input BSM when available.
+#' }
+#' @references Photopoulou, T., Lovell, P., Fedak, M. A., Thomas, L. and 
+#' Matthiopoulos, J. (2015). Efficient abstracting of dive profiles using a 
+#' broken-stick model. Methods Ecol Evol 6, 278-288. 
+#' @examples 
+#' data(exses)
+#' dv <- tdrply(identity, 1:2, no = 100, obj = exses)[[1]]
+#' bsm <- brokenstick(dv) 
+#' dzi <- dive_zone_index(bsm)
+#' 
+#' dzi
+#' str(dzi)
+#' plot(dzi)
+dive_zone_index <- function(x, iter = NULL, n = NULL) {
+  is.bsm(x) || stop('x must be of class "bsm"')
+  
+  # Compute constants
+  npts_ini <- max(x$pts.no)
+  npts_ini > 1 || stop('"x" must have at least 3 break points.')
+  iter <- iter %else% npts_ini
+  rng_y <- range(x$pts.y)
+  if (has_data <- ("data" %in% names(x) && !is.null(x$data))) {
+    n <- nrow(x$data)
+    newx <- x$data[ , 1]
+  } else {
+    if (iter >= npts_ini) warning('Maximum residual (Ri) is not computable for the requested iteration number "iter".', 
+                                  'The last Ri available will be used instead.')
+    n <- n %else% 500
+    newx <- seq(min(x$pts.x), max(x$pts.x), length.out = n)
+  }
+  
+  # Initiate self-dependent variables
+  R <- dz_index <- NULL
+  Ubnd <- -(Lbnd <- rep(Inf, n))
+  
+  for (i in seq(1, iter)) {
+    bsm_i <- update(x, npts = i + 1) # BSM at iteration i
+    bsm_i_pred <- predict(bsm_i, newx)
+    R <- c(R , try(max_residual(x, i, type = "absolute"), TRUE) %else% NULL)
+    Ri <- R[length(R)]
+    
+    # Compute Dive Zone limits and the corresponding index
+    Ubnd <- pmax(bsm_i_pred - Ri, rng_y[1], Ubnd)
+    Lbnd <- pmin(bsm_i_pred + Ri, rng_y[2], Lbnd)
+    dz_width <- Lbnd - Ubnd
+    dz_index <- c(dz_index, sum(dz_width) / (diff(rng_y) * n))
+  }
+  
+  # Format output
+  out <- list(
+    dzi = setNames(dz_index, paste0("DZI", seq(1, iter))), 
+    max_res = setNames(R, paste0("R", seq(1, length(R)))), 
+    dz_Lbnd = Lbnd, dz_Ubnd = Ubnd, dz_width = dz_width, 
+    dz_Xval = newx, no_seg = which.stick(bsm_i, newx), 
+    seg_width = abs(diff(bsm_i$pts.y)), seg_length = abs(diff(bsm_i$pts.x)), 
+    pts.x = x$pts.x, pts.y = x$pts.y, pts.no = x$pts.no, 
+    data = "if"(has_data, x$data, NULL)
+  )
+  class(out) <- c("dzi", "list")
+  out
+}
+
+#' Cost functions for automatic brokenstick models.
+#' 
+#' Given a model and data the function returns a single value which is used to 
+#' determine if the number of points is optimized: the cost function value being 
+#' minimized by the optimal set of parameters.
+#'
+#' @param object Object of class inheriting from "\code{bsm}".
+#' @return A statistic to minimize. 
+#' @details \code{max_dist_cost} In this function the statistic is the maximun 
+#' distance between an 
+#' observation and its fitted value. Hence the function constantly decrease with 
+#' increasing number of point in the model and a threshold must be provided along 
+#' with this function to avoid infinite looping. Yet, the pros of this cost function 
+#' is a threshold that is simple to determine and to interpret.
+#' @seealso \code{\link{optBrokenstick}}
+#' @keywords internal brokenstick
+#' @export
+max_dist_cost <- function(object) {
+  max_residual(object, type = 'absolute')
+}
+
+#' @rdname max_dist_cost
+#' @inheritParams max_dist_cost
+#' @details \code{dist_per_pt_cost} In this function the statistic is the 
+#' average distance between observations and fitted values divided by the number of
+#' points used by the model. This function has does rech a minimun value but 
+#' generally for high numbers of points.
+#' @keywords internal brokenstick
+dist_per_pt_cost <- function(object) {
+  res <- residuals.bsm(object, type = 'absolute')
+  mean(res, na.rm = TRUE) / length(object$pts)
+}
+
+#' @rdname max_dist_cost
+#' @inheritParams max_dist_cost
+#' @details \code{rss_cost} In this function the statistic is the sum of 
+#' squared residuals.
+#' @keywords internal brokenstick
+rss_cost <- function(object) {
+  sum(residuals.bsm(object)^2)
+}
+
+#' @rdname max_dist_cost
+#' @inheritParams max_dist_cost
+#' @details \code{dzi_cost} In this function the statistic is the Dive Zone Index. 
+#' See details in \code{\link{dive_zone_index}}
+#' @export
+#' @keywords internal brokenstick
+dzi_cost <- function(object) {
+  if (max(object$pts.no) == 1) stop('"object" must have at least 3 break points. ', 
+                                    'Set "npmin" to 3 in "optBrokenstick"')
+  last(dive_zone_index(object)$dzi)
+}
+
+#' Coerce brokenstick model to data.frame
+#' 
+#' @param x a brokenstick model.
+#' @inheritParams base::as.data.frame
+#' @export
+#' @keywords internal brokenstick
+#' @examples 
+#' data(exses)
+#' bsm <- tdrply(brokenstick, 1:2, no = 50:53, obj = exses)
+#' lapply(bsm, as.data.frame)
+as.data.frame.bsm <- function(x, row.names = NULL, ...) {
+  n <- length(x$pts.x)
+  df <- data.frame(st_tm = x$pts.x[-n], ed_tm = x$pts.x[-1], no_seg = seq(1, n-1),
+                   bsm_slope = x$slope, intercept = x$intercept, duration = diff(x$pts.x))
+  as.data.frame(df, row.names = row.names, ...)
+}
+
+#' Print summary of a brokenstick model
+#' 
+#' @param object a brokenstick model
+#' @param ... for method consistency
+#' @export
+#' @keywords internal brokenstick
+#' @examples 
+#' data(exses)
+#' dv <- tdrply(identity, 1:2, no = 53, obj = exses)[[1]]
+#' summary(brokenstick(dv))
+#' summary(brokenstick(dv, npts = 12))
+summary.bsm <- function(object, ...) {
+  df <- as.data.frame(object)
+  print(df[ , -(1:2)])
+  r2 <- 1 - (var(resid(object)) / var(object$data[ , 2]))
+  cat("\nR-squared =", r2, "\nMax residual =", maxr <- max_residual(object), 
+      "\nMean squared resiluals =", meanr <- mean(resid(object)^2), 
+      "\nDive Zone Index =", last((dzi <- dive_zone_index(object))$dzi))
+  invisible(list(df = df[ , -(1:2)], r2 = r2, max_res = maxr, 
+                 mean_res = meanr, dzi = dzi))
+}
+
+#' General S3 utils for bsm objects
+#' 
+#' @param pts.x x coordinates of breakpoints. If \code{pts.x} is a list then 
+#' it is interpreted as being a \code{"bsm"} object and is returned as is with 
+#' updated class. Eventually \code{x} can be a table formated in the SMRU format 
+#' (see details section).
+#' @param pts.y y coordinates of breakpoints
+#' @param ... other BSM slots such as \code{"data"}, \code{"fitted"} or 
+#' \code{"residuals"}. See details of slots in \code{\link{brokenstick}}.
+#' @details SMRU format refers to a table with 80 columns extracted from Access 
+#' database on the SMRU Instrumenation website. See the link in references for 
+#' the description of the object ("dive" table, page 4).
+#' @references \url{http://www.smru.st-andrews.ac.uk/protected/specs/DatabaseFieldDescriptions.pdf}
+#' @export
+#' @keywords internal brokenstick
+#' @examples
+#' data(exses)
+#' dv <- tdrply(identity, 1:2, no = 100, obj = exses)[[1]]
+#' bsm <- brokenstick(dv) 
+#' 
+#' as.bsm(bsm$pts.x, bsm$pts.y)
+#' as.bsm(bsm$pts.x, bsm$pts.y, residuals = "dummy")
+#' as.bsm(bsm)
+as.bsm <- function(pts.x, pts.y = NULL, ...) {
+  # Names of SMRU "dive" tables. "RESIDUAL" column ???
+  nms_smru_db <- c("ref", "PTT", "CNT", "DE_DATE", "SURF_DUR", "DIVE_DUR", "MAX_DEP", 
+                   "D1", "D2", "D3", "D4", "V1", "V2", "V3", "V4", "V5", "TRAVEL_R", 
+                   "HOMEDIST", "BOTTOM", "T1", "T2", "T3", "T4", "D_SPEED", "N_DEPTHS", 
+                   "N_SPEEDS", "DEPTH_STR", "SPEED_STR", "PROPN_STR", "PERCENT_AREA", 
+                   "RESIDUAL", "GRP_NUMBER", "D5", "T5", "qc", "D6", "D7", "D8", 
+                   "D9", "D10", "D11", "D12", "D13", "D14", "D15", "D16", "D17", 
+                   "D18", "D19", "D20", "D21", "D22", "D23", "D24", "D25", "T6", 
+                   "T7", "T8", "T9", "T10", "T11", "T12", "T13", "T14", "T15", "T16", 
+                   "T17", "T18", "T19", "T20", "T21", "T22", "T23", "T24", "T25", 
+                   "ds_date", "start_lat", "start_lon", "lat", "lon")
+  
+  # Extract relevant info from SMRU "dive" table
+  if (!is.null(names(pts.x)) && all(names(pts.x) %in% nms_smru_db)) {
+    no_dive <- seq_along(pts.x[ , 1])
+    dv_dur <- pts.x$DIVE_DUR
+    dv_start <- as.POSIXct(pts.x$DE_DATE, format = "%d/%m/%Y", tz = "UTC")
+    
+    .f <- function(x, type) c(0, na.omit(unname(unlist(x))), "if"(type == "x", 100, 0))
+    
+    pts.y <- split(pts.x[ , grep("^D[0-9]+$", names(pts.x))], no_dive)
+    pts.y <- lapply(pts.y, .f, type = "y")
+    
+    pts.x <- split(pts.x[ , grep("^T[0-9]+$", names(pts.x))], no_dive)
+    pts.x <- lapply(pts.x, .f, type = "x")
+    pts.x <- Map("+", Map("*", pts.x , dv_dur / 100), dv_start)
+  }
+  
+  # Whatever it is convert it into a "bsm" object
+  if (is.list(pts.x)) {
+    if (is.bsm(pts.x)) {
+      class(pts.x) <- c("bsm", "list")
+      return(pts.x)
+    } else {
+      out <- Map(as.bsm, pts.x, pts.y)
+    }
+  } else {
+    slts <- list(...)
+    pts.x <- as.numeric(pts.x)
+    out <- brokenstick(pts.x, pts.y, length(pts.x), eco.mem = 4, not.inj.action = "null", sort.data = TRUE)
+    out[names(slts)] <- slts
+  }
+  out
+}
+
+#' @rdname as.bsm
+#' @param x an object to test.
+#' @export
+#' @keywords internal brokenstick
+#' @examples 
+#' \dontrun{
+#' is.bsm(bsm)
+#' }
+is.bsm <- function(x) is(x, "bsm")
+
+#' Print method for bsm objects
+#' @param x a bsm object
+#' @param ... for generic compatibility
+#' @export
+#' @keywords internal brokenstick
+print.bsm <- function(x, ...) print(as.data.frame(x))
+
+#' Print method for dzi objects
+#' @param x a dzi object
+#' @param ... for generic compatibility
+#' @export
+#' @keywords internal brokenstick
+print.dzi <- function(x, ...) print(x$dzi)
+
+#' Plot method for "dzi" objects
+#' @param x a \code{"dzi"} object
+#' @param dz_col color of dive zone area
+#' @param dz_border color of the border of the dive zone area
+#' @param enumerate should the order of BSM break points be enumerated.
+#' @param ... Arguments to be passed to methods, such as graphical 
+#' parameters (see \code{\link{par}}).
+#' @export
+#' @keywords brokenstick
+plot.dzi <- function(x, dz_col = "lightblue", dz_border = "blue", enumerate = TRUE, ...) {
+  has_data <- ("data" %in% names(x) && !is.null(x$data))
+  iter <- length(x$dzi)
+  
+  # Make plot drawing area
+  if (has_data) 
+    plot(x$data, type = "n", ylim = rev(range(x$data[ , 2])), ...)
+  else 
+    plot(x$pts.x, x$pts.y, type = "n", ylim = rev(range(x$pts.y)), ...)
+  
+  # Plot dive zone
+  polygon(c(x$dz_Xval, rev(x$dz_Xval)), c(x$dz_Lbnd, rev(x$dz_Ubnd)), 
+          col = dz_col, border = dz_border)
+  
+  # Add dive profiles (hi-res if available + abstracted profile)
+  if (has_data) lines(x$data)
+  plot(brokenstick(x$pts.x, x$pts.y, npts = iter + 1), enumerate = enumerate, add = TRUE)
+  
+  # Add title
+  title(paste0("Iteration ", iter, " (", iter + 1, " brkpts): ", 
+               "R", length(x$max_res), " = ", round(x$max_res[length(x$max_res)], digits = 2), ", ", 
+               "DZI", iter, " = ", round(x$dzi[iter], digits = 2)))
+  
+  invisible(NULL)
+}
+
+#' Subset the slots of bsm objects
+#' 
+#' \code{bsm} objects, depending on the \code{eco.mem} argument used when they were 
+#' fitted using the \code{\link{brokenstick}} function, can contain numerous slots 
+#' (detailed in \code{\link{brokenstick}}) keeping information about the high 
+#' sampling frequency data. 
+#' These information are usefull to get accurate computations in numerous cases but 
+#' need to be ignored in order to mimic abstracted dive profiles such as 
+#' those obtained by CTD-SRDL tags.
+#' This function is a utility that allows to ignore these high sampling fequency 
+#' information.
+#' 
+#' @param x a \code{bsm} object or a list of \code{bsm} objects.
+#' @param n set the number of slot to ignore as the \code{eco.mem} argument in the 
+#' \code{\link{brokenstick}} function. The default \code{n = 4} returns 
+#' abstracted dive profiles as if they were obtained from CTD-SRDL tags.
+#' @param type A character indicating how the slots are to be handled. 
+#' \code{"ignore"} puts aside the slots (renaming them) so they are ignored by other 
+#' \code{bsm} processing functions but does not remove them. \code{"delete"} delete 
+#' them so that less memory is used to store the object. 
+#' \code{"reset"} reverse the \code{"ignore"} operation.
+#' @export
+#' @keywords brokenstick
+#' @examples 
+#' data(exses)
+#' bsm <- tdrply(brokenstick, 1:2, no = 100, obj = exses)[[1]]
+#' 
+#' bsm <- eco.mem(bsm, type = "ignore")
+#' try(predict(bsm)) # error: required slots treated as absent
+#' bsm <- eco.mem(bsm, type = "reset")
+#' predict(bsm) # slots were restored
+#' identical(bsm, x)
+#' 
+#' # Use type = "delete" to save some memory
+#' lr_bytes <- object.size(eco.mem(bsm, type = "delete")) 
+#' hr_bytes <- object.size(bsm)
+#' paste0(round(100 * as.numeric(lr_bytes / hr_bytes), digits = 2), "%")
+#' 
+#' # Works on lists
+#' bsm <- eco.mem(tdrply(brokenstick, 1:2, no = 100:103, obj = exses), type = "delete")
+#' # Same as
+#' bsm <- tdrply(brokenstick, 1:2, no = 100:103, obj = exses, eco.mem = 4)
+eco.mem <- function(x, n = 4, type = c("ignore", "delete", "reset")) {
+  if (is.bsm(x)) {
+    if (n > 4) stop('"n" must be between 0 and 4.')
+    n_subset <- "if"(n != 0L, -unique(seq(8L - n + 1L, 8L)), seq_along(x))
+    type <- match.arg(type)
+    if (type == "ignore") {
+      nms <- names(x)
+      nms[-n_subset] <- paste0("ignored.", nms[-n_subset])
+      out <- setNames(x, nms)
+    } else if (type == "delete") {
+      out <- do.call(as.bsm, x[n_subset])
+    } else if (type == "reset") {
+      nms <- names(x)
+      nms[-n_subset] <- gsub("ignored\\.", "", nms[-n_subset])
+      out <- setNames(x, nms)
+    }
+    return(out)
+  } else {
+    if (is.list(x)) return(lapply(x, eco.mem))
+  }
+}
+
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#' Vectorized predicate for near equality testing of numerics
+#' 
+#' @param x,y two numeric vectors
+#' @details Pairwise compariosn such as \code{`==`}.
+#' @export
+#' @keywords internal
+nearly_equal <- function(x, y) {
+  is.numeric(x) && is.numeric(y) || stop("x and y must be numerics.")
+  mapply(function(x, y) isTRUE(all.equal(x, y)), x, y)
+}
+
+#' Greatest Common Divisor
+#' 
+#' @param a,b two numeric vectors
+#' @export
+#' @keywords internal
+gcd <- function(a, b) ifelse(nearly_equal(b, 0) | nearly_equal(a, b), a, gcd(b, a %% b))
+
+#' Check if f: X -> Y is injective
+#' 
+#' f is injective: for all (x1, x2) in X^2, f(x1) = f(x2) => x1 = x2.
+#' 
+#' @param x x data
+#' @param y y data
+#' @export
+#' @keywords internal
+is.injective <- function(x, y = NULL) {
+  xy <- as.data.frame(xy.coords(x, y)[1:2])
+  y_values <- unique(xy[ , 2])
+  nyvalues <- sapply(y_values, function(fx) nUN(xy[xy[ , 2] == fx, 1]))
+  all(nyvalues <= 1)
+}
+
+#' Compute difference between extremes in a set of observations
+#' 
+#' @param x observations
+#' @param ord If \code{TRUE}, the output depends on the ranks of observations: 
+#' \code{delta = Last_Extreme - First_Extreme} and therefore returns a negative 
+#' value if \code{max(x)} is enccountered before \code{min(x)} in \code{x} values.
+#' @param na.rm a logical value indicating whether \code{NA} values should be 
+#' stripped before the computation proceeds.
+#' @export
+#' @examples
+#' data(exses)
+#' dives_phases_durations <- tdrply(delta, "time", c("!", "_", "/", "!_/"), obj = exses)
+delta <- function(x, ord = TRUE, na.rm = TRUE) {
+  x <- as.numeric(x)
+  rng <- range(x, na.rm = na.rm)
+  if (ord && which.max(x == rng[1]) > which.max(x == rng[2])) rng <- rev(rng)
+  diff(rng)
+}
+
+#' @rdname first
+#' @title Return first or last element of a list of vector
+#' @description Return first or last element of a list of vector
+#' @param x a list of vector
+#' @export
+#' @examples 
+#' first(1:10)
+first <- function(x) x[1]
+
+#' @rdname first
+#' @export
+#' @examples 
+#' last(1:10)
+last <- function(x) x[length(x)]
+
+#' Test if animal is located around Kerguelen
+#' 
+#' @param lon longitude
+#' @param lat latitude
+#' @param r radius
+#' @details Kerguelen location taken at (49.353282 deg. S,69.354630 deg. E)
+#' @import fields
+#' @export
+at_ker <- function(lon, lat, r = 130) {
+  stopifnot(require("fields"))
+  as.vector(rdist.earth(data.frame(lon, lat), data.frame(69.354630, -49.353282), miles = FALSE)) < r
+}
+
+#' pmean
+#' 
+#' Returns the (parallel) average of the input values.
+#' @param ... numeric or logical arguments
+#' @param na.rm	a logical indicating whether missing values should be removed.
+#' @keywords internal
+#' @export
+#' @examples
+#' pmean(1:3, 3:1)
+#' pmean(1:3, 0)
+pmean <- function (..., na.rm = FALSE) {
+  tmp <- Map(c, ...)
+  sapply(tmp, mean, na.rm = na.rm)
+}
+
+#' Update warning column in delim table
+#' 
+#' @param x Subset of warn column
+#' @param  msg Message to append
+#' @keywords internal
+#' @export
+upd_warn <- function(x, msg) {
+  paste0(ifelse(is.na(x), "", x), ifelse(is.na(x), "", "; "), msg)
+}
+
+#' Angle average
+#' 
+#' @param x angle in radians.
+#' @keywords internal angle
+#' @export
+#' @examples 
+#' agl_mean(c(-pi, pi))
+agl_mean <- function(x) {
+  sinr <- sum(sin(x), na.rm = TRUE)
+  cosr <- sum(cos(x), na.rm = TRUE)
+  atan2(sinr, cosr)
+}
+
+#' Rescale angle to [-pi; pi]
+#' 
+#' @param x angle in radians.
+#' @keywords internal angle
+#' @export
+#' @examples 
+#' agl_rescale(5*pi / c(-4, 4))
+agl_rescale <- function(x) {
+  atan2(sin(x), cos(x))
+}
+
+#' from time stamp to row number
+#' 
+#' @param x a POSIXct vector
+#' @export
+#' @keywords internal
+#' @details assumes that both times are expressed according to the same time zone.
+#' @seealso \code{\link{as.POSIXct}}
+#' @examples 
+#' data(exses)
+#' ind(exses)
+#' x <- sample(1:nrow(exses$tdr), 100)
+#' all(which.row(exses$tdr$time[x]) == x)
+which.row <- function(x, obj = ind()) {
+  mtch <- as.character(as.integer(x))
+  tmp <- structure(seq_along(obj$tdr$time), names = as.integer(obj$tdr$time), class = "integer")
+  setNames(tmp[mtch], mtch)
+}
+
+#' Match values against a data.frame with start and end values 
+#' 
+#' @param x the values to be matched against \code{ref}
+#' @param ref a data.frame with start values in the first column end values in 
+#' the second column and an optional id number in the third column.
+#' @return for each \code{x} value, the row number of \code{ref} where \code{x} 
+#' lies between start and end values. If \code{ref} has a third column (an id) 
+#' its value is returned instead of the row number. When x value matches a start 
+#' and a end value the priority is given to the start.
+#' @keywords internal
+#' @export
+which.bw <- function(x, ref) {
+  first_ed_greater  <- sapply(x, function(x) {
+    tmp <- which(x < ref[ , 2])
+    vals <- ref[tmp, 2]
+    if (length(tmp) == 0) 0 else tmp[which.min(vals)]
+  })
+  last_st_less_eq <- sapply(x, function(x) {
+    tmp <- which(x >= ref[ , 1])
+    vals <- ref[tmp, 1]
+    if (length(tmp) == 0) NA else tmp[which.max(vals)]
+  })
+  first_ed_eq  <- sapply(x, function(x) {
+    tmp <- which(x == ref[ , 2])
+    vals <- ref[tmp, 2]
+    if (length(tmp) == 0) NA else tmp[which.min(vals)]
+  })
+  rks <- ifelse(first_ed_greater == last_st_less_eq, last_st_less_eq, NA)
+  rks <- ifelse(is.na(rks), first_ed_eq, rks)
+  if (ncol(ref) == 3) ref[rks, 3] else rks
+}
+
+#' Find to which specific dive/surface a instant belongs to
+#' 
+#' @param x The time (format \code{POSIXct}) or a integer giving the row number.
+#' @param object A \code{ses} object such as returned by \code{\link{as.ses}}.
+#' @export
+which.dive <- function(x, object = ind()) {
+  if (is.POSIXct(x)) {
+    ref <- data.frame(
+      st = object$tdr[object$delim[ , 1], 1], 
+      ed = object$tdr[object$delim[ , 2], 1], 
+      id = object$delim[ , 3])
+  } else {
+    ref <- object$delim[ , 1:3]
+  }
+  which.bw(x, ref)
+}
+
+#' x with(in/out) y
+#' 
+#' @param x Vector or NULL: the values to be matched.
+#' @param y Vector or NULL: the values to be matched against. 
+#' @export
+#' @keywords internal
+#' @examples
+#' (1:10) %w/i% c(3,7,12) # 3 7
+'%w/i%' <- function(x, y) x[x %in% y]
+
+#' @rdname grapes-w-slash-i-grapes
+#' @inheritParams grapes-w-slash-i-grapes
+#' @export
+#' @keywords internal
+#' @examples
+#' (1:10) %w/o% c(3,7,12) # 1  2  4  5  6  8  9 10
+'%w/o%' <- function(x, y) x[!x %in% y]
+
+#' Scale a series between two values
+#' 
+#' \code{rescale} is a utility to resize the range of values while keeping 
+#' the original spacing between values.
+#' 
+#' @param x Numeric vector.
+#' @param to Output range.
+#' @param from Input range to be rescaled to \code{to}. Default is the range of \code{x}.
+#' @keywords internal
+#' @export
+#' @examples
+#' x <- -10:10
+#' rescale(x)
+#' rescale(x, to = c(-1, 3))
+#' rescale(x, from = c(5, max(x)), to = c(0, 10))
+rescale <- function (x, to = c(0, 1), from = range(x, na.rm = TRUE)) {
+  if (length(to)   > 2) to   <- range(to)
+  if (length(from) > 2) from <- range(from)
+  (x - from[1]) / diff(from) * diff(to) + to[1]
+}
+
+#' Extract numbers in character strings
+#' 
+#' @param x Atomic vector or list.
+#' @param simplify Logical or character string. Should the result be simplified 
+#' to a vector, matrix or higher dimensional array if possible? 
+#' @keywords internal
+#' @export
+#' @examples
+#' # Atomic character
+#' x <- levels(cut(1:100, 3))
+#' (out <- numIn(x))
+#' 
+#' # Atomic factor is coerced to character
+#' x <- unique(cut(1:100, 3))
+#' identical(numIn(x), out) 	# TRUE
+#' 
+#' # Works on list as well
+#' x <- do.call(list, as.list(x))
+#' identical(numIn(x), out) 	# TRUE
+#' 
+#' # When type is not character or factor the names are used
+#' x <- do.call(list, as.list(1:3))
+#' names(x) <- unique(cut(1:100, 3))
+#' identical(numIn(x), out) 	# TRUE
+#' 
+#' # If names is NULL or empty the row.names are used instead
+#' x <- matrix(1:6, 3)
+#' row.names(x) <- levels(cut(1:100, 3))
+#' is.null(names(x)) 		# TRUE
+#' identical(numIn(x), out) 	# TRUE
+numIn <- function(x, simplify = FALSE) {
+  if (is.recursive(x)) {
+    if (any(sapply(x, function(x) !is.character(x)))) {
+      x <- if (all(sapply(x, is.factor))) lapply(x, as.character)
+      else names(x) %else% row.names(x)
+    }
+  } else {
+    if (is.numeric(x)) x <- names(x) %else% row.names(x)
+  }
+  m <- gregexpr('-?[0-9]+\\.?([0-9]*e(\\+|-))?[0-9]*', x)
+  mtch <- if (is.list(x)) mapply(function(x, m) regmatches(x, list(m)), x, m)
+  else regmatches(x, m)
+  sapply(mtch, as.numeric, simplify = simplify)
+}
+
+#' Special operator to test if numeric values belong to a given range
+#' 
+#' %bw% for "between". Values are evaluated against the upper and lower 
+#' bounds with \code{<=} and \code{>=} operators.
+#' 
+#' @param x numeric values
+#' @param int range. Can have more than two elements. Atomic vectors are interpreted 
+#' as a single condition while lists as a list of conditions (recycled if needed).
+#' @export
+#' @keywords internal
+#' @examples
+#' 1:10 %bw% c(2, 9)
+#' 1:10 %bw% 2:10
+#' 1:10 %bw% list(1:4, 1:2)
+'%bw%' <- function (x, int) {
+  if (is.atomic(int)) int <- list(int)
+  .f <- function(x, int) { 
+    if (all(is.na(int)) || all(is.na(int))) NA
+    else x >= min(int, na.rm = TRUE) & x <= max(int, na.rm = TRUE)
+  }
+  mapply(.f, x, int)
+}
+
+#' Replace values in an atomic vector.
+#' @param x The atomic vector
+#' @param na.0 The value to be replaced. Default is NaN.
+#' @param na.1 The replacement. Default is NA.
+#' @keywords internal
+#' @export
+#' @examples
+#' x <- sample(c(1:3,NaN), 20, replace=TRUE)
+#' x 
+#' replaceMissing(x)
+replaceMissing <- function(x, na.0 = NaN, na.1 = NA) {
+  if (is.nan(na.0)) x[is.nan(x)] <- na.1
+  else if (is.na(na.0)) x[is.na(x)] <- na.1
+  else x[is.na(x)] <- na.1
+  x
+}
+
+#' Count the number of NAs in a vector
+#' 
+#' Shortcut for \code{compose(sum, is.na, unlist)}
+#' 
+#' @param x a vector whose elements are to be tested.
+#' @return Return the number of \code{NA} in \code{x}.
+#' @details As any number different from 0 return a \code{TRUE} when coerced to
+#' logical, this function can be used in \code{if} statements.
+#' @export
+#' @keywords internal
+#' @examples
+#' x <- c(rep(NA, 3), 1:3)
+#' nNA(x)
+#' if (nNA(x)) {TRUE} else {FALSE}
+#' if (nNA(1:3)) {TRUE} else {FALSE}
+nNA <- function(x) sum(is.na(unlist(x)))
+
+#' Count the number of unique values in a vector
+#' 
+#' Shortcut for \code{compose(length, unique)}. Count the number of distinct 
+#' values in an atomic vector.
+#' 
+#' @param x a vector whose unique elements are to be counted.
+#' @export
+#' @keywords internal
+#' @examples
+#' nUN(rep(1:5, 5:1)) # 5
+nUN <- function(x) length(unique(x))
+
+#' Else special operator
+#' 
+#' Discard first value if \code{FALSE}, \code{NULL}, empty or \code{"try-error"}
+#' 
+#' @param val Normal output.
+#' @param def Default output when \code{val} is \code{FALSE}, \code{NULL} or empty.
+#' @export
+#' @keywords internal
+#' @examples
+#' "abc" %else% "Another value is returned"
+#' NULL %else% "Another value is returned"
+#' try(log("abc"), silent = TRUE) %else% "Another value is returned"
+'%else%' <- function (val, def = NA){
+  if (identical(val, FALSE) || is.null(val) || length(val) == 0 || is.error(val)) def else val
+}
+
+#' Depth of an R object
+#' @param x The object to analyse.
+#' @export
+#' @details function \code{plotrix::maxDepth}
+#' @keywords internal
+list_depth <- function (x) {
+  if (is.list(x)) {
+    if (identical(x, list())) return(0)
+    maxdepth <- 1
+    for (lindex in 1:length(x)) {
+      newdepth <- list_depth(x[[lindex]]) + 1
+      if (newdepth > maxdepth) 
+        maxdepth <- newdepth
+    }
+  }
+  else maxdepth <- 0
+  return(maxdepth)
+}
+
+#' Flatten a list
+#' 
+#' @param x a list
+#' @param lev the level to which the list is to be flatten. Calculated using 
+#' \code{link{list_depth}}
+#' @export
+#' @keywords internal
+#' @examples 
+#' str(x <- list(a = list(b = 1, c = list(d = 2, e = 3)), f = 4, g = list(h = list(i = 5))))
+#' str(flatten_list(x, 1))
+#' str(flatten_list(x, 2))
+flatten_list <- function(x, lev = 1) {
+  if (list_depth(x) <= lev) return(x)
+  levs <- sapply(x, list_depth) + 1
+  
+  x_copy <- x
+  offset <- 0
+  for (kk in which(levs > lev)) {
+    elt <- x_copy[[kk]]
+    kk <- kk + offset
+    x <- append(x, values = elt, after = kk)
+    x <- x[-kk]
+    offset <- offset + length(elt) - 1
+  }
+  
+  "if"(list_depth(x) <= lev, x , flatten_list(x, lev = lev))
+}
+
+#' nstr
+#' 
+#' Recursive extraction of names (such as \code{names(c(x, recursive=TRUE))}) but
+#' stops when a subelement is atomic (avoid long long run when launched on 
+#' large object such as a TDR dataset).
+#' 
+#' @param x The object to analyse.
+#' @export
+#' @keywords internal
+#' @examples
+#' x <- data.frame(X=1:10, Y=10:1)
+#' names(c(x, recursive=TRUE))
+#' nstr(x)
+nstr <- function(x) {
+  n <- list_depth(x)
+  name.vec <- c()
+  if (n == 1){
+    return(names(x))
+  } else if (n > 1){
+    for (i in seq_along(x)){
+      name.vec <- c(name.vec,
+                    names(x), 
+                    paste(names(x)[i], nstr(x[[i]]), sep='.'))
+    }
+  }
+  return(unique(name.vec[!grepl('\\.$', name.vec)]))
+}
+
+#' Search recurssively to a data.frame
+#' 
+#' This function is a helper designed to be used in \code{tdrply}. It searches 
+#' recurssively in an object for a list of data.frames at a given level of depth. 
+#' If the search ends to atomic vectors, the function builds a list of 
+#' data.frames by taking their elements by two successively.
+#' 
+#' @param .idx An object.
+#' @export
+#' @keywords internal
+#' @seealso \code{\link{tdrply}}
+#' @examples
+#' .idx <- list(1:10, list(1:10))
+#' # df_search(.idx) # error
+#' .idx <- list(1:10, data.frame(1:10, 1:10))
+#' # df_search(.idx) # error
+#' 
+#' .idx <- data.frame(1:10, 10:1)
+#' df_search(.idx)
+#' .idx <- list(a = .idx, b = .idx)
+#' df_search(.idx)
+#' .idx <- list(a = 1:3, b = 1:10)
+#' df_search(.idx)
+df_search <- function(.idx) {
+  if (is(.idx, 'data.frame')) return(.idx)
+  # Test the type of the elements
+  tfuns <- list(df = function(x) is.data.frame(x), 
+                lst = function(x) inherits(x, 'list'), 
+                atm = function(x) is.atomic(x))
+  tres <- lapply(tfuns, function(f) sapply(.idx, f))
+  
+  # Check if the results are even for each type
+  tresHomo <- sapply(tres, function(x) Reduce(identical, x == x[1]))
+  if (any(!tresHomo)) stop('.idx must have an evenly nested structure')
+  
+  # Get matching type and check it is unique
+  type <- names(tres)[sapply(tres, unique)]
+  if (length(type) != 1) stop('Unexpected type(s) found in .idx', str(.idx))
+  
+  # Apply function to elements
+  .roll <- function(x) rollapply(x, c, 2, aty = 'm', nas = FALSE, simplify = TRUE)
+  switch(type, df = .idx, lst = .roll(lapply(.idx, df_search)), 
+         atm = lapply(.idx, function(x) as.data.frame(t(.roll(x)))))
+}
+
+#' Set and get the current individual
+#' 
+#' @param value If provided this value becomes te current individual. If omited 
+#' the function return the last declared individual.
+#' @param cache Should the object be copied in a cache rather than a link to 
+#' the object ?
+#' @export
+#' @seealso \code{ind} is convenient to use with \code{\link{tdrply}}.
+#' @examples
+#' data(exses)
+#' ind(exses)
+#' exses$test <- "test!"
+#' identical(ind(), exses)
+ind <- function(value, cache = FALSE) {
+  if (missing(value)) {
+    if (cache == TRUE) {
+      cache <- get("cache", envir = .GlobalEnv)
+      return(cache$ind)
+    } else {
+      cache <- get("cache", envir = .GlobalEnv)
+      return(eval(cache$link$val, cache$link$env))
+    }
+  } else {  
+    if (!exists("cache", .GlobalEnv))
+      assign("cache", list(), envir = .GlobalEnv) 
+    if (cache == TRUE) {
+      cache$ind <<- value
+    } else {
+      cache$link <<- list(env = parent.frame() , val = substitute(value))
+    }
+  }
+  invisible(NULL)
+}
+globalVariables("cache")
+
+#' is.error
+#' 
+#' @param x The objet to proceed
+#' @export
+#' @keywords internal
+is.error <- function(x) inherits(x, "try-error")
+
+#' floorPOSIXct
+#' 
+#' @param x The POSIXct vector
+#' @param units How to cut the values. The units are partially matched in 
+#' \code{c('secs', 'mins', 'hours', 'days')}. A number can precede the unit.
+#' @param offset To use in the case where a cut occurs at a inconvenient
+#' date (see examples).
+#' @export
+#' @keywords internal
+#' @examples
+#' data(exses)
+#' x <- exses$stat$time - 304*(24*3600)
+#' plot(x, x, type = 'l')
+#' lines(x, floorPOSIXct(x, '2days'), col = 'blue', type = 's')
+#' # To force the cut to occur on the 1st January
+#' lines(x, floorPOSIXct(x, '2days', '1d'), col = 'lightblue', type = 's')
+#' lines(x, floorPOSIXct(x, 'days'), col = 'red', type = 's')
+#' lines(x, floorPOSIXct(x, '0.5d'), col = 'green', type = 's')
+floorPOSIXct <- function(x, units = "days", offset = '0 days', ...) {
+  if (is.numeric(units)) stop("'units' must be a character string.")
+  opt <- list(units, offset)
+  n <- sapply(opt, function(x) unlist(numIn(x)) %else% 1)
+  u <- mapply(function(x, n) gsub(paste0(as.character(n), '|\\ '), '', x), opt, n)
+  chc <- c('secs' = 1, 'mins' = 60, 'hours' = 3600, 'days' = 86400)
+  o <- chc[pmatch(u, names(chc), NA, duplicates.ok = TRUE)] * n 
+  if (nNA(o)) stop('Unknown unit found: ', paste(u, collapse=', '))
+  as.POSIXct(floor((as.numeric(x) - o[2]) / o[1]) * o[1]  + o[2], 
+             tz = attr(x, 'tzone'), origin = '1970-01-01')
+}
+
+#' Decompose an atomic vector to its successive values and their length.
+#' 
+#' The reverse of 'base::rep()' function: decompose an atomic vector to its successive 
+#' values and their length.
+#' 
+#' @param x The atomic vector to examine.
+#' @param idx Should the indexes (start and end) of homogeneous sequences be 
+#' returned as well ?
+#' @return A data frame with values and lengths of the homogeneous sequences 
+#' of x. The class of the column 'value' is copied from the input.
+#' @keywords internal
+#' @export
+#' @examples
+#' (x <- rep(LETTERS[1:10], 10:1))
+#' (y <- per(x))
+#' identical(rep(y$value, y$length), x)   # TRUE
+#' inherits(y$value, class(x))            # TRUE
+per <- function(x, idx = TRUE) {
+  x.org <- x
+  if (is.logical(x) || is.factor(x)) {x <- as.numeric(x)}
+  else if (is.character(x)) {x <- as.numeric(as.factor(x))}
+  
+  chg <- diff(x)
+  end <- c(which(chg != 0), length(x))
+  start <- c(1, end[-length(end)] + 1)
+  
+  out <- if (idx) 
+    data.frame(st_idx = start, ed_idx = end, 
+               value = x.org[start], length = end - start + 1, 
+               stringsAsFactors = FALSE)
+  else 
+    data.frame(value = x.org[start], length = end - start + 1, 
+               stringsAsFactors = FALSE)
+  
+  class(out) <- c("per", "data.frame")
+  out
+}
+
+#' is.POSIXct
+#' 
+#' @param x The objet to proceed
+#' @export
+#' @keywords internal
+is.POSIXct <- function (x) is(x, "POSIXct")
+
+#' Linear interpolation
+#' 
+#' @param x A vector with missing values to interpolate.
+#' @param n_max The maximun number of successive missing values to interpolate.
+#' @export
+#' @keywords internal
+li <- function(x, n_max = NULL) {
+  to_interpolate <- is.na(x) | is.nan(x)
+  seqs <- per(to_interpolate)
+  if (!is.null(n_max)) {
+    seqs$value[seqs$value & seqs$length > n_max] <- FALSE
+    seqs <- per(rep(seqs$value, seqs$length))
+  }
+  
+  st_idx <- seqs$ed_idx[!seqs$value][-sum(!seqs$value)]
+  ed_idx <- seqs$st_idx[!seqs$value][-1]
+  n_vals  <- ed_idx - st_idx + 1
+  
+  li_out <- Map(seq, from = x[st_idx], to = x[ed_idx], length.out = n_vals)
+  for (ii in seq_along(li_out)) {
+    x[st_idx[ii]:ed_idx[ii]] <- li_out[[ii]]
+  }
+  x
+}
+
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#' Depth consistency index between two dives
+#' 
+#' dri_dive2 * (max_depth_dive2 - max_depth_dive1) / max_depth_dive2
+#' 
+#' @param x input data, a \code{ses} object. 
+#' @param depth_col Character or numeric giving the column of the TDR table that 
+#' stores the depth sequence
+#' @param fmt Should the function return a vector with pairwise comparison 
+#' of dive taken in chronologic order or a dissimilarity matrix ?
+#' @param na.pad If TRUE and \code{fmt = "vector"} then a NA is appended to 
+#' the beginning of the result so that the output can be directly allocated 
+#' to the dive statistics table. If TRUE and \code{fmt = "matrix"} then the 
+#' upper triangle of the matrix is filled with NA to save memory.
+#' @param ... Arguments to be passed to \code{\link{depth_range_index}}.
+#' @details Low values indicate high consistency between the vertical areas 
+#' vistited in the bottom of the two dives (depth range and maximum depth). 
+#' Low values can incitate benthic dives.
+#' @export
+#' @keywords behavior
+#' @references Halsey, L.G., Bost, C.-A., Handrich, Y. (2007) A thorough and 
+#' quantified method for classifying seabird diving behaviour. 
+#' Polar Biology, 30, 991-1004.
+#' @examples 
+#' data(exses)
+#' exses$stat$dci <- depth_consistency_index(exses)
+#' hist(exses$stat$dci)
+#' plot(dci ~ time, exses$stat)
+#' 
+#' Mdci <- depth_consistency_index(exses, fmt = "matrix", na.pad = FALSE)
+#' image(log(Mdci + 0.001)) # Red for values close to 0
+depth_consistency_index <- function(x = ind(), depth_col = 2, fmt = c("vector", "matrix"), 
+                                    na.pad = TRUE, ...) {
+  fmt <- match.arg(fmt, c("vector", "matrix"))
+  dri <- depth_range_index(x, depth_col, ...)
+  depth_max <- tdrply(max, depth_col, ty = "_", obj = x)
+  out <- dri * abs(outer(depth_max, depth_max, "-")) / depth_max
+  
+  if (fmt == "vector") {
+    out <- c("if"(na.pad, NA, NULL), diag(out[-1, ]))
+  } else  {
+    if (na.pad) out[upper.tri(out)] <- NA
+  }
+  out
+}
+
+#' Dive/bottom symmetry index
+#' 
+#' Based on the moment where animal reaches the dive maximum depth.
+#' 
+#' @param x input data, a \code{ses} object. 
+#' @param time_col Character or numeric giving the column of the TDR table that 
+#' stores the timestamps.
+#' @param depth_col Character or numeric giving the column of the TDR table that 
+#' stores the depth sequence
+#' @param type Should the index be computed on the bottom phase only 
+#' (\code{type = "_"}) or on the complete dive profile (\code{type = "!_/"})
+#' @details The index ranges from 0 (skewed to the left) to 1 (skewed to the right).
+#' @export
+#' @keywords behavior
+#' @references Halsey, L.G., Bost, C.-A., Handrich, Y. (2007) A thorough and 
+#' quantified method for classifying seabird diving behaviour. 
+#' Polar Biology, 30, 991-1004.
+#' @examples 
+#' data(exses)
+#' exses$stat$btt.sym <- symmetry_index(exses)
+#' exses$stat$dv.sym <- symmetry_index(exses, type = "!_/")
+#' 
+#' plot(exses$stat[ , c("time", "btt.sym", "dv.sym")])
+symmetry_index <- function(x = ind(), type = c("_", "!_/"), time_col = 1, depth_col = 2) {
+  type <- match.arg(type, c("_", "!_/"))
+  depth_max.rk <- tdrply(which.max, depth_col, ty = type, obj = x)
+  depth_max.tm <- mapply("[", tdrply(identity, time_col, ty = type, obj = x), depth_max.rk)
+  
+  btt_start.tm <- tdrply(min, time_col, ty = type, obj = x)
+  btt.dur <- tdrply(delta, time_col, ty = type, obj = x, ord = FALSE)
+  
+  (depth_max.tm - btt_start.tm) / btt.dur
+}
+
+#' Depth Range Index
+#' 
+#' Vertical extent of the bottom phase 
+#' 
+#' @param x input data, a \code{ses} object. 
+#' @param depth_col Character or numeric giving the column of the TDR table that 
+#' stores the depth sequence
+#' @param probs numeric vector of length 2 giving the quantiles probabilities
+#' to be used to compute the range. Default to min and max (\code{c(0, 1)}). 
+#' \code{c(0.1, 0.9)} can be usefull in order to get estimates robust to 
+#' wrong bottom delimitation or unusually high wiggles.
+#' @param index Should the depth range be divided by the dive maximum depth (index 
+#' ranging between 0 and 1) or the absolute values be returned ?
+#' @details The index ranges from 0 (perfectly flat bottom) to 1 (large vertical 
+#' width bottom).
+#' @export
+#' @keywords behavior
+#' @references Halsey, L.G., Bost, C.-A., Handrich, Y. (2007) A thorough and 
+#' quantified method for classifying seabird diving behaviour. 
+#' Polar Biology, 30, 991-1004.
+#' @examples 
+#' data(exses)
+#' exses$stat$dri <- depth_range_index(exses)
+#' 
+#' plot(dri ~ time, exses$stat)
+depth_range_index <- function(x = ind(), depth_col = 2, probs = c(0, 1), index = TRUE) {
+  btt.rng <- tdrply(function(x) list(quantile(x, na.rm = TRUE, probs = probs)), 
+                    depth_col, ty = "_", obj = x)
+  out <- rapply(btt.rng, diff)
+  if (index) {
+    depth_max <- tdrply(max, depth_col, ty = "_", obj = x)
+    out <- out / depth_max
+  } 
+  out
+}
+
+#' Broadness index
+#' 
+#' The duration of the bottom phase divided by the duration of the dive
+#' 
+#' @param x input data, a \code{ses} object. 
+#' @param time_col Character or numeric giving the column of the TDR table that 
+#' stores the timestamps.
+#' @details The index ranges from 0 (short bottom) to 1 (long bottom).
+#' @export
+#' @keywords behavior
+#' @references Halsey, L.G., Bost, C.-A., Handrich, Y. (2007) A thorough and 
+#' quantified method for classifying seabird diving behaviour. 
+#' Polar Biology, 30, 991-1004.
+#' @examples 
+#' data(exses)
+#' exses$stat$brd <- broadness_index(exses)
+#' 
+#' plot(brd ~ time, exses$stat)
+broadness_index <- function(x = ind(), time_col = 1) {
+  dv.dur <- tdrply(delta, time_col, ty = "!_/", obj = x, ord = FALSE)
+  btt.dur <- tdrply(delta, time_col, ty = "_", obj = x, ord = FALSE)
+  btt.dur / dv.dur
+}
+
+#' Compute the Time Allocation at Depth (TAD) index of a dive
+#' 
+#' @param x input data. Can be a numeric vector of depth records 
+#' (then sampling frequency should be provided), a data frame with time and depth 
+#' as columns 1 & 2 or some \code{bsm}/\code{tdr}/\code{ses} objects.
+#' @param fs Sampling frequency (in Hz). Optional if a full time sequence is provided.
+#' @param vs Maximum vertical speed achievable.
+#' @param ... \code{na.rm} or other arguments (mainly for S3 methods compatibility).
+#' @details The index takes values from 0 for a dive where the maximum of time was spent
+#'  at the minimum depth, to 0.5 for \code{"V"} shaped dives and 1 
+#' for \code{"U"} shaped dives.
+#' \code{"ses"} and \code{"tdr"} methods assume that time and depth information 
+#' respectively occupy the first and second columns of the \code{tdr} tables.
+#' @references Fedak, M. A., Lovell, P. and Grant, S. M. (2001). Two Approaches 
+#' to Compressing and Interpreting Time-Depth Information as as Collected by 
+#' Time-Depth Recorders and Satellite-Linked Data Recorders. 
+#' Marine Mammal Science 17, 94--110.
+#' @export
+#' @examples 
+#' data(exses)
+#' bsm_6pts <- tdrply(brokenstick, 1:2, obj = exses)
+
+#' # These 4 lines return the same result
+#' tad_highres <- tdrply(time_at_depth, 2, obj = exses, vs = 2, fs = 1)
+#' tad_highres <- tdrply(time_at_depth, 1:2, obj = exses, vs = 2)
+#' tad_highres <- sapply(bsm_6pts, time_at_depth, vs = 2) # "data" slot is used
+#' exses$stat$tad <- tad_highres <- time_at_depth(exses, vs = 2)
+#' # When the "data" slot is not available
+#' tad_lowres <- sapply(eco.mem(bsm_6pts), time_at_depth, vs = 2) # "data" slot is not used
+#' 
+#' plot(tad_highres, tad_lowres) ; abline(0, 1, col = "red", lwd = 3)
+#' plot(tad ~ time, exses$stat)
+time_at_depth <- function(x, vs = Inf, fs = NULL, ...) {
+  UseMethod("time_at_depth")
+}
+
+#' @rdname time_at_depth
+#' @inheritParams time_at_depth
+#' @export
+time_at_depth.default <-  function(x, vs = Inf, fs = NULL, ...) {
+  # Check that time information can be obtained from input data
+  if (is.null(fs)) {
+    if (!is.recursive(x) & !is.infinite(vs)) stop("You must provide sampling frequency.")
+    else fs <- time_reso(x[ , 1], type = "frequence")
+  }
+  
+  # Format x
+  if (is.recursive(x)) x <- x[ , 2]
+  x <- as.numeric(x) - min(x, ...)
+  
+  # Compute TAD according to vs
+  if (is.infinite(vs)) {
+    TAD <- mean(x, ...) / max(x, ...)
+  } else {
+    actual_area <- sum(x, ...) / fs # Aobs
+    max_depth   <- max(x, ...)      # D
+    travel_area <- max_depth^2 / vs # At = 2 * (Tt * D) / 2 = D / vs * D = D^2 /vs
+    max_area    <- (length(x) * fs) * max_depth - travel_area # Am = T*D - At
+    TAD <- (actual_area - travel_area) / (max_area - travel_area)
+  }
+  
+  TAD %bw% c(0,1) || warning("TAD exceeded 1: Maximun vertical speed 'vs' may be erroneous.")
+  TAD
+}
+
+#' @rdname time_at_depth
+#' @inheritParams time_at_depth
+#' @export
+time_at_depth.tdr <- function(x, vs = Inf, ...) {
+  time_at_depth.default(x[ , 1:2], vs = vs, ...)
+}
+
+#' @rdname time_at_depth
+#' @inheritParams time_at_depth
+#' @export
+time_at_depth.bsm <- function(x, vs = Inf, ...) {
+  if ("data" %in% names(x)) {
+    TAD <- time_at_depth.default(x$data, vs = vs, ...)
+  } else {
+    max(x$pts.no) >= 4 || stop("At least 4 breakpoints are needed to get an informative TAD index.")
+    tm <- seq(min(x$pts.x), max(x$pts.x), by = 1)
+    HR_data <- data.frame(time = tm, depth = predict(x, tm))
+    TAD <- time_at_depth.default(HR_data, vs = vs, fs = 1, ...)
+  }
+  
+  TAD
+}
+
+#' @rdname time_at_depth
+#' @inheritParams time_at_depth
+#' @export
+time_at_depth.ses <- function(x = ind(), vs = Inf, ...) {
+  tdrply(time_at_depth.default, 1:2, obj = x, vs = vs, ...)
+}
+
+#' Count/Extract wiggles in 2D dataset.
+#' 
+#' According to Halsey et al. 2007 (see references): Wiggles are a particular 
+#' pattern in the dive profile over time during a dive where an increase in depth 
+#' over time changes to a decrease in depth and then back to an increase in 
+#' depth. This creates a short period in the dive profile that is concave in 
+#' shape. Wiggles are defined as elements of the dive profile during which at 
+#' three points the vertical speed passes below 0 m/s. (NB: If useful, 
+#' certain wiggles could be ignored, e.g. using a threshold based on their 
+#' depth range or duration.). This function implements this definition of the 
+#' wiggle and is primarily intended to be used on dive profile but it can be 
+#' useful to extract the inversions in any kind of 2D data having a monotonous 
+#' x variable.
+#' 
+#' @param x The x data. A monotonous variable such as the time sequence of a TDR 
+#' dataset. Can also be a list of \code{x} and \code{y} 
+#' (processed by \code{\link{xy.coords}}). If x is a data frame with motre than 
+#' two columns the fist two columns are used.
+#' @param y The y data.
+#' @param thres.y minimum y difference within a wiggle for it to be taken into 
+#' account. The default values are usually appropriate if Y is a depth variable 
+#' from a southern elephant seal dataset. If one value is provided wiggles are kept 
+#' if the y differences are greater than this threshold. If two values are 
+#' provided wiggles are kept when the y differences lie between these thresholds. 
+#' This threshold is used by \code{\link{optBrokenstick}} in conjunction with 
+#' \code{\link{max_dist_cost}} so it can not be set to \code{NULL} unless a value 
+#' is passed to the \code{bsm} argument.
+#' @param thres.x minimum x difference within a wiggle for it to be taken into 
+#' account. The default value is usually appropriate if X is a time variable 
+#' from a southern elephant seal dataset. If one value is provided wiggles are 
+#' kept when the x differences are greater than this threshold. If two values are 
+#' provided wiggles are kept if the x differences lie between these thresholds. 
+#' \code{NULL} is equivalent to \code{c(0, Inf)}.
+#' @param plt Should graphics about processing be plotted ?
+#' @param output Should the function return the number of wiggles ("wig-count"), 
+#' the number of steps ("stp-count") or a data frame with width, height and 
+#'  height/width ratio for each transit/step/wiggle identified ("table"). 
+#' @param bsm To speed up the process you can provide a brokenstick model to use 
+#' directly instead of computing a new one from x and y data.
+#' @param step A vertical speed threshold defining "steps" (0.35 m/s for king 
+#' penguin). If \code{NULL} then steps are ignored.
+#' @param step.thres.x similar to \code{thres.x} but applies to steps only.
+#' @param step.thres.y similar to \code{thres.y} but applies to steps only.
+#' @export
+#' @keywords behavior
+#' @references Halsey, L.G., Bost, C.-A., Handrich, Y. (2007) A thorough and 
+#' quantified method for classifying seabird diving behaviour. 
+#' Polar Biology, 30, 991-1004.
+#' @examples
+#' data(exses)
+#' 
+#' # Number of wiggles can be used as a proxy of the foraging activity
+#' sunflowerplot(tdrply(wiggles, ty = '_', obj = exses), exses$stat$pca)
+#' sunflowerplot(tdrply(wiggles, ty = '_', obj = exses, step = 0.35), exses$stat$pca)
+#' 
+#' # Identifying steps as well
+#' tdrply(wiggles, c("time", "depth"), ty = '_', no = 65, obj = exses, 
+#'        step = 0.35, output = "table", plt = TRUE)
+wiggles <- function(x, y = NULL, thres.y = 2.5, thres.x = c(10, Inf), 
+                    step = NULL, step.thres.y = NULL, step.thres.x = c(10, Inf), 
+                    output = c("wig-count", "stp-count", "table"), 
+                    plt = FALSE, bsm = NULL) {
+  output <- match.arg(output, output)
+  if (is.null(step) && output == "stp-count") 
+    stop('"step" canot be NULL when step count is required as output.')
+  xy <- as.data.frame(xy.coords(x, y)[1:2])
+  if (is.null(bsm)) 
+    bsm <- optBrokenstick(xy, threshold = thres.y, cost = max_dist_cost)
+  
+  # Check if there is no wiggle at all
+  bsm_slp <- coef(bsm)$slope
+  if (!is.null(step)) 
+    bsm_slp[bsm_slp %bw% c(0, step)] <- 0
+  slp <- per(sign(bsm_slp))
+  
+  # Function to check if successive rows of a "slp" table can be a wiggle
+  check_wiggles <-function(slp) {
+    # Wiggles must start with negative slope (or zero) (is toward surface if y = depth)
+    if (slp$value[1] == 1) slp <- slp[-1, ]
+    if (nrow(slp) <= 1) return(NULL)
+    # Wiggles must end with positive slope (or zero) (is toward benthos if y = depth)
+    if (slp$value[nrow(slp)] == -1) slp <- slp[-nrow(slp), ]
+    if (nrow(slp) <= 1) return(NULL)
+    slp
+  }
+  
+  # Delimitate steps
+  slp$no_stp <- ifelse(slp$value == 0, cumsum(slp$value == 0), 0)
+  if (output == "stp-count" && all(slp$no_stp == 0)) return(0)
+  slp$no_wig  <- 0
+  # Delimitate wiggles between steps
+  tmp <- per(slp$value == 0)
+  tmp <- tmp[!tmp$value & tmp$length >= 2, ]
+  wigs <- Map(function(st, ed) check_wiggles(slp[st:ed, ]), tmp$st_idx, tmp$ed_idx)
+  # Give wiggles a number
+  cnd <- !sapply(wigs, is.null)
+  if (any(cnd)) {
+    wigs <- wigs[cnd]
+    n_wig <- sapply(wigs, nrow) / 2
+    no_wig <- cumsum(n_wig)
+    wigs <- Map(function(x, n, no) {
+      x$no_wig <- rep(seq(no-n+1, no), each = 2)
+      x}, wigs, n_wig, no_wig)
+    # Update slp table
+    for (ii in seq_along(wigs)) {
+      slp[row.names(wigs[[ii]]), ] <- wigs[[ii]]
+    }
+  } else {
+    if (output == "wig-count") return(0)
+  }
+  
+  # Function to compute stats given a colum with id numbers
+  pts_stck <- which.stick(bsm, bsm$pts, type = 'i')
+  compute_stats <- function(x, by) {
+    idx <- by(x, by, function(x) seq(min(x$st_idx), max(x$ed_idx)+1), 
+              simplify = FALSE)
+    idx <- idx[names(idx) %w/o% "0"]
+    st <- sapply(idx, function(x) min(bsm$pts[pts_stck %in% x]))
+    ed <- sapply(idx, function(x) max(bsm$pts[pts_stck %in% x]))
+    # Comptute stats
+    out <- data.frame(start_x = xy$x[st], end_x = xy$x[ed], no = seq_along(st))
+    out$width <- mapply(function(st, ed) diff(xy$x[c(st, ed)]), st, ed)
+    out$height <- mapply(function(st, ed) diff(range(xy$y[st:ed], na.rm = TRUE)), st, ed)
+    out$ratio <- out$height / out$width
+    out
+  }
+  
+  # Get wiggles stats & check if match thres.x and thres.y conditions 
+  if (any(slp$no_wig != 0)) {
+    out_wig <- compute_stats(slp, slp$no_wig)
+    out_wig$type <- "wiggle"
+    if (length(thres.x) < 2) {
+      cond_x <- out_wig$width >= (thres.x %else% 0)
+    } else {
+      cond_x <- out_wig$width %bw% (thres.x %else% c(0, Inf))
+    }
+    if (length(thres.y) != 2) {
+      cond_y <- out_wig$height >= (thres.y %else% 0)
+    } else {
+      cond_y <- out_wig$height %bw% thres.y
+    }
+    cnd <- cond_x & cond_y
+    no_rejected <- out_wig$no[!cnd]
+    out_wig <- out_wig[cnd, ]
+    out_wig$no <- seq_along(out_wig$start_x)
+    slp$no_wig[slp$no_wig %in% no_rejected] <- 0
+  } else {
+    out_wig <- data.frame(start_x = numeric(), end_x = numeric(), no = numeric(), 
+                          width = numeric(), height = numeric(), type =character())
+  }
+  
+  # Get steps stats & check if match thres.x and thres.y conditions
+  if (any(slp$no_stp != 0)) {
+    out_stp <- compute_stats(slp, slp$no_stp)
+    out_stp$type <- "step"
+    if (length(step.thres.x) < 2) {
+      cond_x <- out_stp$width >= (step.thres.x %else% 0)
+    } else {
+      cond_x <- out_stp$width %bw% (step.thres.x %else% c(0, Inf))
+    }
+    if (length(step.thres.y) != 2) {
+      cond_y <- out_stp$height >= (step.thres.y %else% 0)
+    } else {
+      cond_y <- out_stp$height %bw% step.thres.y
+    }
+    cnd <- cond_x & cond_y
+    no_rejected <- out_stp$no[!cnd]
+    out_stp <- out_stp[cnd, ]
+    out_stp$no <- seq_along(out_stp$start_x)
+    slp$no_stp[slp$no_stp %in% no_rejected] <- 0
+  } else {
+    out_stp <- do.call(data.frame, setNames(lapply(out_wig, function(x) vector(mode(x))), names(out_wig)))
+  }
+  
+  # Get transit stats
+  # Update transit id with rejected wiggles and steps
+  slp$no_trn <- (slp$no_wig == 0 & slp$no_stp == 0)
+  slp$no_trn <- ifelse(slp$no_trn, cumsum(slp$no_trn), 0)
+  if (any(slp$no_trn != 0)) {
+    out_trn <- compute_stats(slp, slp$no_trn)
+    out_trn$type <- "transit"
+  } else {
+    out_trn <- do.call(data.frame, setNames(lapply(out_wig, function(x) vector(mode(x))), names(out_wig)))
+  }
+  
+  # Merge results
+  out <- rbind(out_wig, out_stp, out_trn)
+  out <- out[order(out$start_x), ]
+  out$type <- factor(out$type, levels = c("transit", "wiggle", "step"))
+  out <- na.omit(out)
+  cnd <- duplicated(out$end_x)
+  if (sum(cnd) > 1) browser()
+  if (any(cnd)) out$end_x[which(cnd) - 1] <- out$start_x[which(cnd)]
+  
+  # Plot results
+  if (plt) {
+    yl <- rev(range(xy$y))
+    plot(xy, type = 'l', ylim = yl)
+    points(xy, col = out$type[which.bw(xy$x, out)], pch = 19)
+    lims <- unique(c(out$start_x, out$end_x))
+    abline(v = lims, lty = 2, col = 'gray')
+    legend("topleft", legend = levels(out$type), col = 1:3, lwd = 2)
+    ys <-  rnorm(nrow(out), max(xy$y), abs(diff(yl))*0.01)
+    segments(x0 = out$start_x, x1 = out$end_x, y0 = ys, lwd = 2, col =  out$type)
+    lims <- unique(c(out$start_x, out$end_x))
+    abline(v = lims, lty = 2, col = 'gray')
+    legend("topleft", legend = levels(out$type), col = 1:3, lwd = 2)
+  }
+  
+  # Return result according to output argument
+  if (output == "wig-count") {
+    cnd <- out$type == "wiggle"
+    out <- "if"(any(cnd), max(out$no[cnd]), 0)
+  } else if (output == "stp-count") {
+    cnd <- out$type == "step"
+    out <- "if"(any(cnd), max(out$no[cnd]), 0)
+  }
+  out
+}
+
+#' Compute straightness index
+#' 
+#' \code{straightness} compute a straightness index between 0 and 1 by making the 
+#' ration \code{L / l} where \code{L} is the cumulated distance between 
+#' brokenstick points and and where \code{l} the cumulated distance between 
+#' each \code{y} data points.
+#' 
+#' @param x The x data (time).
+#' @param y The y data (depth).
+#' @param npts The number of points to use. 2 is the minimum (from the start 
+#' to the end of data). Each new point adds a step (using the \code{\link{brokenstick}} 
+#' algorithm) which is taken into account when computing \code{L}.
+#' @return \code{straightness} returns a number between 0 (maximum sinuosity) 
+#' to 1 (maximum straightness). \code{sinuosity} is equivalent to 
+#' \code{1 / straightness}.
+#' @export
+#' @keywords behavior
+#' @examples
+#' data(exses)
+#' ind(exses)
+#' sunflowerplot(tdrply(straightness, cl = 1:2, ty = '_'), exses$stat$pca)
+straightness <- function(x, y = NULL, npts = 3) {
+  bsm <- brokenstick(x, y, npts)
+  L <- sum(abs(diff(bsm$data[bsm$pts, 2])))
+  l <- sum(abs(diff(bsm$data[ , 2])))
+  L / l
+}
+
+#' @rdname straightness
+#' @export
+sinuosity <- function(x, y = NULL, npts = 3) {
+  1 / straightness(x, y, npts)
+}
+
+#' Shannon entropy index on time at depth proportions
+#' 
+#' @param x a character vector naming the depth layers.
+#' @param base base argument passed to \code{\link{log}}.
+#' @param scale if TRUE the output is divided by the \code{log(N)} where N is the 
+#' number of layers so that outpout lies between 0 and 1.\code{log(N)} is the 
+#' minimum entropy for sample with N layers where each observation of sample is 
+#' unique i.e all probability are equal.
+#' @export
+#' @keywords behavior
+#' @examples 
+#' data(exses)
+#' ind(exses)
+#' 
+#' brks <- do.call(seq, as.list(c(range(exses$tdr$depth, na.rm = TRUE), by = 2)))
+#' exses$tdr$depth_cat <- as.character(cut(exses$tdr$depth, brks))
+#' plot(tdrply(entropy, "depth_cat", ty = "!_/"), exses$stat$pca)
+entropy <- function(x, base = 2, scale = FALSE) {
+  pi <- tapply(x, x, length) / length(x)
+  H <- -sum(pi * log(pi, base))
+  "if"(scale, H / log(nUN(x), base), H)
+}
+
+#' Count the number of Prey Catch Attemps (PCA)
+#' 
+#' @param x a logical vector indicating at each timestamp if it was associated 
+#' to a PCA event.
+#' @details A continuous succession of \code{TRUE} is considered as a single PCA.
+#' @export
+#' @examples 
+#' data(exses)
+#' btt_pca <- tdrply(pca_count, "is_pca", ty = "_", obj = exses)
+pca_count <- function(x) try(sum(per(x)$value)) %else% NA
+
+
