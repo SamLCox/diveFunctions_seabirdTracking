@@ -1,0 +1,279 @@
+rm(list=ls())
+
+require("rbl")
+require("data.table")
+require("RcppRoll")
+require("CircStats")
+require("signal")
+require("lubridate")
+library(dplyr)
+library(ggplot2)
+library(diveMove)
+
+Sys.setenv(TZ='UTC')
+
+
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#### read in data-set ready for use.
+
+## data-set should be provided as 'puffinDives' with columns of 
+## date_time = formatted date time
+## seconds_sinceStart = second since start of each dive
+## id_dive = unique ID for each dive
+## depth = depth of each point of the dive
+
+## note that in our analysis, only dives with at least 10 data recording points (depths) were included.
+
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#### broken-stick model (bsm) to split dive into inflection points (so these are not incorrectly classified as wiggles)
+
+## create column for bsm id
+puffinDives$bsm_id <- rep(NA, nrow(puffinDives))
+
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+## loop over each unique id_dive - running BSM function from SESMAN (function is also available in functions for wiggles script within repository)
+for (id_dive in unique(puffinDives$id_dive)) {
+  
+  counter <- 1
+  # subset data for the current id_dive
+  current_dive <- puffinDives[puffinDives$id_dive == id_dive, ]
+  
+  # perform broken-stick operation for the current dive data
+  bsm <- optBrokenstick(current_dive$seconds_sinceStart, current_dive$depth, cost=max_dist_cost, npmin=3, npmax=6, threshold=9) # threshold may need to be altered according to data-set
+  
+  # loop over each point in the brokenstick output
+  for (II in 2:length(bsm$pts.x)) {
+    startInd <- which(current_dive$seconds_sinceStart == bsm$pts.x[II - 1])
+    endInd <- which(current_dive$seconds_sinceStart == bsm$pts.x[II])
+    
+    # assign broken-stick ID to dive components
+    current_dive$bsm_id[c(startInd:endInd)] <- counter
+    
+    # increment counter
+    counter <- counter + 1
+  }
+  
+  # Update the corresponding rows in the original data frame
+  puffinDives[puffinDives$id_dive == id_dive, ] <- current_dive
+}
+
+rm(counter, bsm, II)
+
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+## create unique bsm identifier
+puffinDives$id_bsm_dive <- paste(puffinDives$id_dive,"_",puffinDives$bsm_id)
+
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+## create column with number of points per bsm section (similar to the one for number of points per dive)
+puffinDives <- puffinDives %>%
+  group_by(id_bsm_dive) %>%
+  mutate(num_points_bsm = n()) %>%
+  ungroup()
+
+max(puffinDives$num_points_bsm,na.rm=TRUE)#max number of points if 47
+min(puffinDives$num_points_bsm,na.rm=TRUE)#min number of points is 1?
+
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+## retain only bsm segments with at least 4 points (as wiggle fucntion wont work well on these)
+
+## filter data to only include bsm segments of more than 4 points to run the wiggles function on
+puffinDives <- puffinDives %>%
+  dplyr::filter(num_points_bsm > 4)
+
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#### wiggle function
+
+## function is for one BSM segment of dive, that is time ordered
+#----------------------------------------------
+# Function: wiggleFunction_puffinDives
+# Purpose: Detect "wiggles" (rapid vertical oscillations)
+#          within a single dive based on depthâtime data.
+#          Returns both a summary (count per dive) and
+#          details for each detected wiggle (start/end times, depth change, duration).
+#----------------------------------------------
+
+wiggleFunction_puffinDives <- function(
+    secondsStart = puffinDives$seconds_sinceStart,  # vector of time-stamps (seconds since dive start)
+    diveDepth = puffinDives$depth,                  # vector of depth measurements (m, positive downward)
+    ID = id_bsm_dive,                               # unique dive identifier
+    thres = 0.5                                     # threshold for detecting a meaningful slope reversal (m) - i.e. wiggle
+){
+  
+  #----------------------------------------------
+  # INITIAL SETUP
+  #----------------------------------------------
+  
+  endInd <- length(diveDepth)     # total number of depth samples in this dive
+  
+  # calculate overall slope of dive (difference between last and first depth)
+  # this determines whether the dive is primarily descending (positive slope) or ascending (negative slope) â used to switch logic later
+  slope <- diveDepth[endInd] - diveDepth[1]
+  
+  # calculate the first difference (depth change per sample interval)
+  # this tells us whether the animal is moving up or down between samples
+  diffSlope <- c(0, diveDepth[2:endInd] - diveDepth[1:(endInd-1)])
+  
+  #----------------------------------------------
+  # INITIALISE OUTPUT VARIABLES
+  #----------------------------------------------
+  
+  wiggle_count <- 0                            # number of wiggles detected in this dive
+  wiggle_ID <- NULL                            # vector of wiggle sequence numbers (1, 2, 3, â¦)
+  wiggleStart_secondsStartDive <- NULL         # start time (s) of each wiggle
+  wiggleEnd_secondsStartDive <- NULL           # end time (s) of each wiggle
+  wiggleOn <- 0                                # flag indicating if currently inside a wiggle
+  
+  #----------------------------------------------
+  # DETECT WIGGLES IN DESCENDING DIVES
+  #----------------------------------------------
+  # for dive segments (bsm) where final depth > starting depth
+  # (i.e. slope > 0, interpreted as descending)
+  #----------------------------------------------
+  
+  if (slope > 0) {
+    for (JJ in 2:(endInd - 1)) {
+      
+      # detect start of a wiggle
+      # a wiggle begins when change in depth switches from increasing (descending, diffSlope > 0) to decreasing (ascending, diffSlope < 0) indicating a reversal in direction
+      # the magnitude of the change must exceed 'thres' (threshold) to avoid counting noise as wiggles
+      # the depth change threshold can occur over one or two depth points (JJ vs JJ and JJ+1)
+      
+      if ( (diffSlope[JJ - 1] > 0 & diffSlope[JJ] < 0 & abs(diffSlope[JJ]) > thres) |
+           (diffSlope[JJ - 1] > 0 & diffSlope[JJ] < 0 & diffSlope[JJ + 1] < 0 &
+            abs(sum(diffSlope[c(JJ, JJ + 1)])) > thres) ) {
+        
+        wiggle_count <- wiggle_count + 1
+        wiggle_ID <- c(wiggle_ID, wiggle_count)
+        wiggleStart_secondsStartDive <- c(wiggleStart_secondsStartDive, secondsStart[JJ - 1])
+        wiggleOn <- 1   # mark that weâre currently inside a wiggle
+      }
+      
+      # detect end of a wiggle
+      # a wiggle ends when change in depth switches back from ascending (diffSlope < 0) to descending (diffSlope >= 0) & a wiggle is currently active
+      if (diffSlope[JJ] >= 0 & diffSlope[JJ - 1] < 0 & wiggleOn == 1) {
+        wiggleEnd_secondsStartDive <- c(wiggleEnd_secondsStartDive, secondsStart[JJ - 1])
+        wiggleOn <- 0
+      }
+      
+      # if we reach the final sample and are still "in" a wiggle, close it at the end of the dive (bsm) segment
+      if (wiggleOn == 1 & JJ == endInd - 1) {
+        wiggleEnd_secondsStartDive <- c(wiggleEnd_secondsStartDive, secondsStart[JJ])
+      }
+    }
+    
+    rm(JJ)
+  }
+  
+  #----------------------------------------------
+  # DETECT WIGGLES IN ASCENDING DIVES
+  #----------------------------------------------
+  # for dives where final depth < starting depth (slope < 0) - the processes mirrors that above, but slope signs are reversed.
+  #----------------------------------------------
+  
+  if (slope < 0) {
+    for (JJ in 2:(endInd - 1)) {
+      
+      # wiggle start - reversal from downward (diffSlope < 0) to upward (diffSlope > 0)
+      if ( (diffSlope[JJ - 1] < 0 & diffSlope[JJ] > 0 & abs(diffSlope[JJ]) > thres) |
+           (diffSlope[JJ - 1] < 0 & diffSlope[JJ] > 0 & diffSlope[JJ + 1] > 0 &
+            abs(sum(diffSlope[c(JJ, JJ + 1)])) > thres) ) {
+        
+        wiggle_count <- wiggle_count + 1
+        wiggle_ID <- c(wiggle_ID, wiggle_count)
+        wiggleStart_secondsStartDive <- c(wiggleStart_secondsStartDive, secondsStart[JJ - 1])
+        wiggleOn <- 1
+      }
+      
+      # wiggle end - reversal back to downward motion
+      if (diffSlope[JJ] <= 0 & diffSlope[JJ - 1] > 0 & wiggleOn == 1) {
+        wiggleEnd_secondsStartDive <- c(wiggleEnd_secondsStartDive, secondsStart[JJ - 1])
+        wiggleOn <- 0
+      }
+      
+      # close wiggle at end if still open
+      if (wiggleOn == 1 & JJ == endInd - 1) {
+        wiggleEnd_secondsStartDive <- c(wiggleEnd_secondsStartDive, secondsStart[JJ])
+      }
+    }
+    rm(JJ)
+  }
+  
+  #----------------------------------------------
+  # BUILD OUTPUT DATA
+  #----------------------------------------------
+  # two possible outputs:
+  # (1) a summary: total wiggle count per dive (always returned)
+  # (2) a detailed table for each wiggle (only if any are found)
+  #----------------------------------------------
+  
+  if (wiggle_count > 0) {
+    
+    # create data-frame summarising each wiggle
+    outputTable <- data.frame(
+      id_bsm_dive = rep(ID, wiggle_count), 
+      wiggle_ID = wiggle_ID, 
+      wiggleStart_secondsStartDive = wiggleStart_secondsStartDive,
+      wiggleEnd_secondsStartDive = wiggleEnd_secondsStartDive
+    )
+    
+    # initialise columns for duration and vertical range
+    outputTable$wiggle_duration <- rep(NA, nrow(outputTable))
+    outputTable$wiggle_depthChange <- rep(NA, nrow(outputTable))
+    
+    # calculate duration and vertical extent for each wiggle
+    for (JJ in 1:nrow(outputTable)) {
+      
+      # duration (seconds)
+      outputTable$wiggle_duration[JJ] <-
+        wiggleEnd_secondsStartDive[JJ] - wiggleStart_secondsStartDive[JJ]
+      
+      # depth range covered within the wiggle (m)
+      outputTable$wiggle_depthChange[JJ] <-
+        max(diveDepth[which(secondsStart >= wiggleStart_secondsStartDive[JJ] &
+                              secondsStart <= wiggleEnd_secondsStartDive[JJ])]) -
+        min(diveDepth[which(secondsStart >= wiggleStart_secondsStartDive[JJ] &
+                              secondsStart <= wiggleEnd_secondsStartDive[JJ])])
+    }
+    
+    # return both the summary (bsm ID and count) and the detailed table
+    return(list(
+      data.frame(id_bsm_dive = ID, wiggle_count = wiggle_count),
+      outputTable
+    ))
+  }
+  
+  #----------------------------------------------
+  # RETURN ZERO-WIGGLE CASE
+  #----------------------------------------------
+  if (wiggle_count == 0) {
+    return(list(data.frame(id_bsm_dive = ID, wiggle_count = wiggle_count)))
+  }
+  
+}  # end function
+
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+##%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+## create loop to run function
+
+uniqueList <- unique(puffinDives$id_bsm_dive)
+wiggleList <- list()
+
+for(II in 1:length(uniqueList)){
+  wiggleList[[II]] <- wiggleFunction_puffinDives(secondsStart = puffinDives$seconds_sinceStart[puffinDives$id_bsm_dive == uniqueList[II]], 
+                                                 diveDepth = puffinDives$depth[puffinDives$id_bsm_dive == uniqueList[II]], 
+                                                 ID = uniqueList[II], thres = 0.25)
+}
+
+## convert output to data-frame for analyses
+puff_wiggles<- bind_rows(wiggleList) # collapse lists
+
+## remove wiggle count column
+puff_wiggles_summary<- subset(puff_wiggles, select = -wiggle_count) # remove wiggle count column
+
+## keep only rows with wiggles in them
+puff_wiggles_summary <- puff_wiggles_summary[!is.na(puff_wiggles_summary$wiggle_ID), ] # keep only rows with wiggles in them
+
+
